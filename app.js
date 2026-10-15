@@ -3979,3 +3979,4 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnProbarImpresora = document.getElementById('btn-probar-impresora');
   if (btnProbarImpresora) btnProbarImpresora.addEventListener('click', probarImpresoraPOS);
 });
+

@@ -702,3 +702,4 @@ input:focus, select:focus { border-color: var(--rosa-medio); background: var(--c
   #traslado-print th, #traslado-print td, #venta-print th, #venta-print td, #deudor-print th, #deudor-print td, #proveedor-print th, #proveedor-print td, #cotizacion-print th, #cotizacion-print td { border: 1px solid #999; padding: 6px 10px; text-align: left; }
   #traslado-print th, #venta-print th, #deudor-print th, #proveedor-print th, #cotizacion-print th { background: #eee; }
 }
+
