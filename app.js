@@ -2930,18 +2930,8 @@ function abrirModalProducto(id, codigoBarrasPrellenado) {
     // existe todavía, se deja ya escrito para no tener que digitarlo.
     if (codigoBarrasPrellenado) document.getElementById('prod-codigobarras').value = codigoBarrasPrellenado;
   }
-  actualizarPcompraIva();
   abrirModal('modal-producto');
   if (!id) setTimeout(() => document.getElementById(codigoBarrasPrellenado ? 'prod-ref' : 'prod-codigobarras').focus(), 100);
-}
-
-// Muestra, solo como referencia (no se guarda en ningún lado), el precio de
-// compra + IVA (19%), para ayudar a decidir el precio de venta.
-function actualizarPcompraIva() {
-  const el = document.getElementById('prod-pcompra-iva');
-  const pcompra = parseFloat(document.getElementById('prod-pcompra').value) || 0;
-  if (pcompra <= 0) { el.textContent = ''; return; }
-  el.textContent = `Costo + IVA (19%): ${fmt(pcompra * (1 + TASA_IVA))}`;
 }
 
 async function guardarProducto() {
@@ -3714,7 +3704,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Inventario
   document.getElementById('btn-abrir-modal-producto').addEventListener('click',()=>abrirModalProducto(null));
   document.getElementById('btn-guardar-producto').addEventListener('click', guardarProducto);
-  document.getElementById('prod-pcompra').addEventListener('input', actualizarPcompraIva);
   document.getElementById('inv-search').addEventListener('input', () => { inventarioMostrar = 10; renderInventario(); });
 
   // Lector de código de barras en Inventario: al escanear y llegar el Enter,
@@ -3979,4 +3968,3 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnProbarImpresora = document.getElementById('btn-probar-impresora');
   if (btnProbarImpresora) btnProbarImpresora.addEventListener('click', probarImpresoraPOS);
 });
-
