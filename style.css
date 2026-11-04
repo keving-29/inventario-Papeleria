@@ -932,3 +932,29 @@ input:focus, select:focus, textarea:focus { border-color: var(--rosa); backgroun
   .top-cab span:nth-child(4),.top-barra{display:none}
   .top-mini-dona{display:flex;justify-content:center}
 }
+
+/* ===== Cuenta abierta de deudores ===== */
+.modal.modal-cuenta { max-width: 820px; width: 94%; }
+.cta-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.cta-et { font-size: 11px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--texto2); display: flex; gap: 8px; align-items: center; }
+.cta-nombre { font-family: var(--fuente-titulo); font-size: 24px; font-weight: 600; color: var(--rosa-oscuro); margin: 4px 0 2px; }
+.cta-sub { font-size: 13px; color: var(--texto2); }
+.cta-botones { display: flex; gap: 8px; flex-wrap: wrap; }
+.cta-botones button:disabled { opacity: .5; cursor: not-allowed; }
+.cta-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.cta-kpi { background: var(--blush-claro); border: 1px solid var(--borde); border-radius: 14px; padding: 14px 16px; }
+.cta-kpi span { display: block; font-size: 12px; color: var(--texto2); }
+.cta-kpi b { font-family: var(--fuente-titulo); font-size: 22px; font-weight: 600; }
+.cta-kpi.saldo { background: linear-gradient(135deg, var(--rosa), var(--rosa-oscuro)); border-color: var(--rosa); color: #fff; }
+.cta-kpi.saldo span { color: var(--rosa-claro); }
+.cta-fila { display: grid; grid-template-columns: 92px 82px minmax(0, 1fr) 50px 90px 34px; gap: 0 10px; align-items: center; padding: 10px 6px; border-bottom: 1px solid var(--borde); font-size: 14px; }
+.cta-fila.abono { background: #E3F3EA; border-radius: 8px; color: #1B6B43; }
+.cta-hora { color: var(--texto2); font-size: 13px; }
+.cta-der { text-align: right; }
+.cta-val { text-align: right; font-weight: 600; grid-column: span 2; }
+.cta-cabecera { font-size: 11px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--texto2); padding-top: 0; }
+@media (max-width: 600px) {
+  .cta-kpis { grid-template-columns: 1fr; }
+  .cta-fila { grid-template-columns: 72px minmax(0, 1fr) 80px 28px; }
+  .cta-fila .cta-hora, .cta-fila .cta-der:nth-of-type(1), .cta-cabecera span:nth-child(2), .cta-cabecera span:nth-child(4) { display: none; }
+}

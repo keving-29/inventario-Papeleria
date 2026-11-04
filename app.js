@@ -45,7 +45,6 @@ let editandoDeudorId    = null;
 let deudorAbonoActual   = null;
 let tipoAbonoActual     = 'deudor';
 let gastoCategoriaSeleccionada = null;
-let productosDeudor   = [];
 let productosAnticipo = [];
 let editandoAnticipoId  = null;
 let proveedorAbonoActual = null;
@@ -1474,7 +1473,8 @@ async function registrarPagoDeuda(entidad, tipo, monto, metodoPago) {
   let costoTotal = 0;
   productos.forEach(pr => {
     const p = DB.productos.find(x => x.id===pr.productoId);
-    if (p) costoTotal += p.pcompra * (pr.cantidad||0);
+    const costoU = (pr.costoUnit != null) ? Number(pr.costoUnit) : (p ? p.pcompra : 0);
+    costoTotal += costoU * (pr.cantidad||0);
   });
   const gananciaTotal = entidad.monto - costoTotal;
   const gananciaPago = entidad.monto>0 ? monto * (gananciaTotal/entidad.monto) : 0;
@@ -1632,7 +1632,7 @@ async function guardarAbono() {
 
     guardarLocal();
     cerrarModal('modal-abono');
-    if (tipoAbonoActual==='deudor') renderDeudores(); else renderAnticipos();
+    if (tipoAbonoActual==='deudor') { renderDeudores(); if (cuentaActualId === d.id) renderCuenta(); } else renderAnticipos();
     renderDashboard();
 
     const completado = calcularSaldo(d)<=0;
@@ -1652,200 +1652,140 @@ async function guardarAbono() {
 }
 
 // =============================================
-// DEUDORES (el cliente ya se lleva el producto)
+// DEUDORES — cuenta abierta por cliente
 // =============================================
-function agregarProductoDeudor(p) {
-  const existente = productosDeudor.find(x=>x.productoId===p.id);
-  if (existente) {
-    if (existente.cantidad >= p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${p.nombre}.`); return; }
-    existente.cantidad += 1;
-  } else {
-    if (p.stock < 1) { alert('Sin stock disponible de este producto.'); return; }
-    productosDeudor.push({ productoId: p.id, ref: p.ref, nombre: p.nombre, cantidad: 1, precioUnit: p.pventa1 });
-  }
-  renderProductosDeudor();
-  recalcularMontoDeudor();
-}
-
-function recalcularMontoDeudor() {
-  const total = productosDeudor.reduce((a,p)=>a+p.precioUnit*p.cantidad,0);
-  if (total>0) document.getElementById('deudor-monto').value = total;
-}
-
-function renderProductosDeudor() {
-  const cont = document.getElementById('deudor-productos-lista');
-  if (productosDeudor.length === 0) { cont.innerHTML = ''; return; }
-  cont.innerHTML = productosDeudor.map((item,idx) => `
-    <div class="carrito-item">
-      <div class="item-nombre">
-        <strong>${esc(item.nombre)}</strong>
-        <span>Ref: ${esc(item.ref)}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <input type="number" value="${item.cantidad}" min="1" class="input-cantidad-deudor" data-idx="${idx}">
-        <span class="item-total">${fmt(item.precioUnit*item.cantidad)}</span>
-        <button type="button" class="btn-peligro btn-quitar-producto-deudor-item" data-idx="${idx}" style="padding:6px 10px"><i class="ti ti-x"></i></button>
-      </div>
-    </div>`).join('');
-
-  cont.querySelectorAll('.input-cantidad-deudor').forEach(input => {
-    input.addEventListener('change', () => {
-      const idx = parseInt(input.dataset.idx);
-      const item = productosDeudor[idx];
-      const p = DB.productos.find(x=>x.id===item.productoId);
-      let nuevaCant = Math.max(1, parseInt(input.value)||1);
-      if (p && nuevaCant > p.stock) {
-        alert(`Solo hay ${p.stock} unidades disponibles de ${item.nombre}.`);
-        nuevaCant = p.stock > 0 ? p.stock : 1;
-      }
-      item.cantidad = nuevaCant;
-      renderProductosDeudor();
-      recalcularMontoDeudor();
-    });
-  });
-  cont.querySelectorAll('.btn-quitar-producto-deudor-item').forEach(b =>
-    b.addEventListener('click', () => {
-      productosDeudor.splice(parseInt(b.dataset.idx),1);
-      renderProductosDeudor();
-      recalcularMontoDeudor();
-    }));
-}
-
 async function guardarDeudorEnSheet(d, esNuevo) {
   const fila = [d.id,d.clienteId,d.nombre,d.cedula,d.telefono,d.direccion,JSON.stringify(d.productos||[]),d.monto,d.nota,d.fecha,d.hora,d.fechaLimite,JSON.stringify(d.abonos),d.pagada];
   if (esNuevo) return await sheetsEscribir('append','Deudores',fila);
   return await sheetsEscribir('update','Deudores',fila,d.id);
 }
 
+let cuentaActualId = null;
+let cargoProductoSel = null;
+
+function horaAMinutos(h) {
+  const m = String(h || '').match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*([apAP])?/);
+  if (!m) return 0;
+  let hh = parseInt(m[1]);
+  if (m[3]) { const pm = m[3].toLowerCase() === 'p'; if (pm && hh < 12) hh += 12; if (!pm && hh === 12) hh = 0; }
+  return hh * 60 + parseInt(m[2]);
+}
+
+function costoDeCargo(c) {
+  if (c.costoUnit != null && c.costoUnit !== '') return Number(c.costoUnit) || 0;
+  const p = DB.productos.find(x => x.id === c.productoId);
+  return p ? (Number(p.pcompra) || 0) : 0;
+}
+
+// Cargos de la cuenta (lo que se ha llevado), con fecha y hora. Las deudas viejas
+// sin fecha usan la de la cuenta; si el monto es mayor a la suma de los productos,
+// la diferencia aparece como "Deuda inicial".
+function cargosDeCuenta(d) {
+  const lista = (d.productos || []).map((c, i) => ({
+    real: true, idx: i, fecha: c.fecha || d.fecha, hora: c.hora || d.hora,
+    detalle: c.productoNombre || c.nombre || 'Producto', cant: Number(c.cantidad) || 0,
+    valor: (Number(c.precioUnit) || 0) * (Number(c.cantidad) || 0), ref: c.ref || '',
+    costo: costoDeCargo(c) * (Number(c.cantidad) || 0), productoId: c.productoId
+  }));
+  const suma = lista.reduce((a, c) => a + c.valor, 0);
+  const resto = (Number(d.monto) || 0) - suma;
+  if (resto > 0.5) lista.unshift({ real: false, fecha: d.fecha, hora: d.hora, detalle: 'Deuda inicial', cant: 0, valor: resto, costo: 0 });
+  return lista;
+}
+
+function movimientosDeCuenta(d) {
+  const mov = cargosDeCuenta(d).map(c => Object.assign({ tipo: 'cargo' }, c));
+  (d.abonos || []).forEach(a => mov.push({ tipo: 'abono', fecha: a.fecha, hora: a.hora, detalle: 'Abono en ' + (a.metodoPago === 'transferencia' ? 'transferencia' : 'efectivo'), cant: 0, valor: Number(a.monto) || 0 }));
+  mov.forEach((m, i) => { m._o = i; m._t = parseFechaCO(m.fecha).getTime() + horaAMinutos(m.hora) * 60000; });
+  mov.sort((a, b) => (a._t - b._t) || (a._o - b._o));
+  return mov;
+}
+
+function ultimoMovimientoCuenta(d) {
+  const mov = movimientosDeCuenta(d);
+  return mov.length ? mov[mov.length - 1] : null;
+}
+
 function abrirModalDeudor(id) {
   editandoDeudorId = id || null;
-  productosDeudor = [];
-  document.getElementById('deudor-producto-buscar').value = '';
-  document.getElementById('deudor-producto-resultados').innerHTML = '';
-  document.getElementById('deudor-anticipo').value = '';
-  document.querySelector('input[name="deudor-metodo"][value="efectivo"]').checked = true;
   quitarClienteDeudor();
   document.getElementById('deudor-cliente-buscar').value = '';
   document.getElementById('deudor-cliente-resultados').innerHTML = '';
-  document.getElementById('modal-deudor-titulo').textContent = id ? 'Editar deudor' : 'Agregar deudor';
+  document.getElementById('modal-deudor-titulo').textContent = id ? 'Editar cuenta' : 'Nueva cuenta';
   if (id) {
     const d = DB.deudores.find(x => x.id === id);
     if (!d) return;
-    seleccionarClienteDeudor({ id: d.clienteId, nombre: d.nombre, cedula: d.cedula, telefono: d.telefono });
-    productosDeudor = (d.productos||[]).map(p=>({productoId:p.productoId, ref:p.ref||'', nombre:p.productoNombre, cantidad:p.cantidad, precioUnit:p.precioUnit}));
-    document.getElementById('deudor-monto').value = d.monto;
-    document.getElementById('deudor-nota').value = d.nota||'';
+    seleccionarClienteDeudor({ id: d.clienteId, nombre: d.nombre, cedula: d.cedula, telefono: d.telefono, direccion: d.direccion });
+    document.getElementById('deudor-nota').value = d.nota || '';
     document.getElementById('deudor-fecha-limite').value = coAIso(d.fechaLimite);
   } else {
-    ['deudor-monto','deudor-nota','deudor-fecha-limite'].forEach(x => document.getElementById(x).value='');
+    ['deudor-nota','deudor-fecha-limite'].forEach(x => document.getElementById(x).value = '');
   }
-  renderProductosDeudor();
   abrirModal('modal-deudor');
 }
 
 async function guardarDeudor() {
-  const monto = parseFloat(document.getElementById('deudor-monto').value)||0;
   const nota = document.getElementById('deudor-nota').value.trim();
   const fechaLimiteISO = document.getElementById('deudor-fecha-limite').value;
-  if (!clienteDeudor||!monto) { alert('Selecciona un cliente e ingresa el monto de la deuda'); return; }
-  for (const item of productosDeudor) {
-    const p = DB.productos.find(x => x.id===item.productoId);
-    if (p && item.cantidad > p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${item.nombre}.`); return; }
-  }
-
+  if (!clienteDeudor) { alert('Selecciona un cliente'); return; }
   const fechaLimite = fechaLimiteISO ? isoAFechaCO(fechaLimiteISO) : '';
   const btn = document.getElementById('btn-guardar-deudor');
-  btn.textContent='Guardando...'; btn.disabled=true;
-  const productos = productosDeudor.map(p=>({productoId:p.productoId, ref:p.ref, productoNombre:p.nombre, cantidad:p.cantidad, precioUnit:p.precioUnit}));
+  btn.textContent = 'Guardando...'; btn.disabled = true;
 
   if (editandoDeudorId) {
-    const d = DB.deudores.find(x => x.id===editandoDeudorId);
+    const d = DB.deudores.find(x => x.id === editandoDeudorId);
     if (d) {
-      Object.assign(d, {
-        clienteId: clienteDeudor.id, nombre: clienteDeudor.nombre, cedula: clienteDeudor.cedula,
-        telefono: clienteDeudor.telefono||'', nota, productos, monto, fechaLimite
-      });
-      d.pagada = calcularSaldo(d) <= 0;
-      const actualizado = await guardarDeudorEnSheet(d, false);
-      if (!actualizado) {
-        btn.textContent='Guardar'; btn.disabled=false;
-        alert('NO SE PUDO ACTUALIZAR EL DEUDOR EN GOOGLE SHEETS.\n\nNo se cerró el formulario para que puedas volver a intentarlo.');
-        return;
-      }
+      Object.assign(d, { clienteId: clienteDeudor.id, nombre: clienteDeudor.nombre, cedula: clienteDeudor.cedula, telefono: clienteDeudor.telefono || '', direccion: clienteDeudor.direccion || d.direccion || '', nota, fechaLimite });
+      const ok = await guardarDeudorEnSheet(d, false);
+      if (!ok) { btn.textContent = 'Guardar'; btn.disabled = false; alert('NO SE PUDO ACTUALIZAR LA CUENTA EN GOOGLE SHEETS.\n\nNo se cerró el formulario para que puedas volver a intentarlo.'); return; }
     }
-    btn.textContent='Guardar'; btn.disabled=false;
+    btn.textContent = 'Guardar'; btn.disabled = false;
     guardarLocal(); cerrarModal('modal-deudor'); renderDeudores();
-    mostrarToast('Deudor actualizado ✓');
+    if (cuentaActualId) renderCuenta();
+    mostrarToast('Cuenta actualizada ✓');
     return;
-  }
-
-  const anticipo = parseFloat(document.getElementById('deudor-anticipo').value)||0;
-  const metodoPago = document.querySelector('input[name="deudor-metodo"]:checked').value;
-  if (anticipo > monto) { alert('El pago inicial no puede ser mayor al monto total de la deuda'); return; }
-
-  // El cliente se lleva los productos de una vez: se descuenta el inventario ya
-  for (const item of productosDeudor) {
-    const p = DB.productos.find(x => x.id===item.productoId);
-    if (p) {
-      p.stock = Math.max(0, p.stock - item.cantidad);
-      await sheetsEscribir('update','Productos',[p.id,p.ref,p.nombre,p.pcompra,p.pventa1,p.pventa2,p.stock],p.id);
-    }
   }
 
   const ahora = new Date();
   const nuevo = {
     id: uid(), clienteId: clienteDeudor.id, nombre: clienteDeudor.nombre, cedula: clienteDeudor.cedula,
-    telefono: clienteDeudor.telefono||'', direccion: clienteDeudor.direccion||'',
-    productos,
-    monto, nota, fecha: fechaCO(ahora), hora: horaCO(ahora), fechaLimite,
+    telefono: clienteDeudor.telefono || '', direccion: clienteDeudor.direccion || '',
+    productos: [], monto: 0, nota, fecha: fechaCO(ahora), hora: horaCO(ahora), fechaLimite,
     abonos: [], pagada: false
   };
   DB.deudores.push(nuevo);
-  const deudorGuardado = await guardarDeudorEnSheet(nuevo, true);
-  if (!deudorGuardado) {
+  const ok = await guardarDeudorEnSheet(nuevo, true);
+  btn.textContent = 'Guardar'; btn.disabled = false;
+  if (!ok) {
     DB.deudores = DB.deudores.filter(x => x.id !== nuevo.id);
-    btn.textContent='Guardar'; btn.disabled=false;
-    alert('NO SE PUDO GUARDAR EL DEUDOR EN GOOGLE SHEETS.\n\nRevisa la conexión y vuelve a intentarlo.');
+    alert('NO SE PUDO GUARDAR LA CUENTA EN GOOGLE SHEETS.\n\nRevisa la conexión y vuelve a intentarlo.');
     return;
   }
-
-  if (anticipo > 0) {
-    try {
-      const ventaInicial = await registrarPagoDeuda(nuevo, 'deudor', anticipo, metodoPago);
-      const deudorActualizado = await guardarDeudorEnSheet(nuevo, false);
-      if (!deudorActualizado) {
-        if (ventaInicial) await sheetsEscribir('delete','Ventas',null,ventaInicial.id);
-        DB.ventas = DB.ventas.filter(v => !ventaInicial || v.id !== ventaInicial.id);
-        DB.deudores = DB.deudores.filter(x => x.id !== nuevo.id);
-        alert('NO SE PUDO GUARDAR EL ABONO INICIAL DEL DEUDOR.\n\nEl registro fue revertido para evitar inconsistencias.');
-        btn.textContent='Guardar'; btn.disabled=false;
-        return;
-      }
-    } catch (e) {
-      DB.deudores = DB.deudores.filter(x => x.id !== nuevo.id);
-      console.error('Error guardando abono inicial:', e);
-      alert('NO SE PUDO GUARDAR EL ABONO INICIAL.\n\n' + (e && e.message ? e.message : String(e)));
-      btn.textContent='Guardar'; btn.disabled=false;
-      return;
-    }
-  }
-
-  guardarLocal(); btn.textContent='Guardar'; btn.disabled=false;
-  cerrarModal('modal-deudor'); renderDeudores(); renderDashboard();
-  mostrarToast('Deudor agregado ✓ (usa el botón de imprimir para el boucher)');
+  guardarLocal(); cerrarModal('modal-deudor'); renderDeudores();
+  mostrarToast('Cuenta creada ✓');
+  abrirCuenta(nuevo.id);
 }
 
 async function eliminarDeudor(id) {
-  if (!confirm('¿Eliminar este deudor?')) return;
+  if (!confirm('¿Eliminar esta cuenta completa?')) return;
   await sheetsEscribir('delete','Deudores',null,id);
   DB.deudores = DB.deudores.filter(d => d.id!==id);
-  guardarLocal(); renderDeudores(); mostrarToast('Deudor eliminado');
+  if (cuentaActualId === id) { cuentaActualId = null; cerrarModal('modal-cuenta'); }
+  guardarLocal(); renderDeudores(); renderDashboard(); mostrarToast('Cuenta eliminada');
+}
+
+function badgeCuenta(d) {
+  const saldo = calcularSaldo(d);
+  if (!(Number(d.monto) > 0)) return '<span class="badge rosa">Nueva</span>';
+  return saldo <= 0 ? '<span class="badge ok">Pagada</span>'
+    : deudaVencida(d) ? '<span class="badge danger">Vencida</span>'
+    : '<span class="badge alerta">Pendiente</span>';
 }
 
 function renderDeudores() {
   const cont = document.getElementById('deudores-contenido');
   if (DB.deudores.length === 0) {
-    cont.innerHTML = `<div class="estado-vacio"><i class="ti ti-users"></i><p>Sin deudores registrados.</p></div>`;
+    cont.innerHTML = `<div class="estado-vacio"><i class="ti ti-users"></i><p>Sin cuentas de deudores. Crea una con “+ Nueva cuenta”.</p></div>`;
     return;
   }
 
@@ -1853,39 +1793,276 @@ function renderDeudores() {
 
   const filas = ordenados.map(d => {
     const saldo = calcularSaldo(d);
-    const abonado = calcularAbonado(d);
-    const vencida = deudaVencida(d);
-    const badge = saldo<=0 ? '<span class="badge ok">Pagada</span>'
-      : vencida ? '<span class="badge danger">Vencida</span>'
-      : '<span class="badge alerta">Pendiente</span>';
+    const u = ultimoMovimientoCuenta(d);
     return `<tr>
-      <td>${esc(d.nombre)}<div style="font-size:11px;color:var(--texto2)">CC ${esc(d.cedula)}</div></td>
-      <td style="font-size:13px">${d.productos&&d.productos.length?d.productos.map(p=>esc(p.productoNombre)+' x'+p.cantidad).join(', '):'-'}</td>
+      <td>${esc(d.nombre)}${d.nota ? `<div style="font-size:12px;color:var(--rosa-oscuro);font-weight:500">${esc(d.nota)}</div>` : ''}<div style="font-size:11px;color:var(--texto2)">CC ${esc(d.cedula)}</div></td>
       <td>${fmt(d.monto)}</td>
-      <td>${fmt(abonado)}</td>
-      <td style="font-weight:500">${fmt(saldo)}</td>
+      <td>${fmt(calcularAbonado(d))}</td>
+      <td style="font-weight:600">${fmt(saldo)}</td>
+      <td style="font-size:12px;color:var(--texto2)">${u ? esc(u.fecha) + '<br>' + esc(u.detalle) : '-'}</td>
       <td style="font-size:13px">${d.fechaLimite||'-'}</td>
-      <td>${badge}</td>
+      <td>${badgeCuenta(d)}</td>
       <td><div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${saldo>0?`<button class="btn-primary btn-abonar-deudor" data-id="${d.id}" style="padding:6px 10px"><i class="ti ti-cash"></i></button>`:''}
-        <button class="btn-secundario btn-boucher-deudor" data-id="${d.id}" style="padding:6px 10px"><i class="ti ti-printer"></i></button>
-        <button class="btn-secundario btn-editar-deudor" data-id="${d.id}" style="padding:6px 10px"><i class="ti ti-edit"></i></button>
+        <button class="btn-primary btn-abrir-cuenta" data-id="${d.id}" style="padding:6px 12px"><i class="ti ti-notebook"></i> Abrir cuenta</button>
+        ${saldo>0?`<button class="btn-secundario btn-abonar-deudor" data-id="${d.id}" style="padding:6px 10px" title="Registrar abono"><i class="ti ti-cash"></i></button>`:''}
+        <button class="btn-secundario btn-boucher-deudor" data-id="${d.id}" style="padding:6px 10px" title="Imprimir cuenta"><i class="ti ti-printer"></i></button>
         <button class="btn-peligro btn-eliminar-deudor" data-id="${d.id}" style="padding:6px 10px"><i class="ti ti-trash"></i></button>
       </div></td>
     </tr>`;
   }).join('');
 
   cont.innerHTML = `<div class="tabla-wrap"><table>
-    <thead><tr><th>Deudor</th><th>Producto</th><th>Monto</th><th>Abonado</th><th>Saldo</th><th>Fecha límite</th><th>Estado</th><th>Acciones</th></tr></thead>
+    <thead><tr><th>Cliente / cuenta</th><th>Fiado</th><th>Abonado</th><th>Saldo</th><th>Último movimiento</th><th>Fecha límite</th><th>Estado</th><th>Acciones</th></tr></thead>
     <tbody>${filas}</tbody></table></div>`;
 
+  cont.querySelectorAll('.btn-abrir-cuenta').forEach(b => b.addEventListener('click', () => abrirCuenta(b.dataset.id)));
   cont.querySelectorAll('.btn-abonar-deudor').forEach(b => b.addEventListener('click', () => abrirModalAbono(b.dataset.id, 'deudor')));
   cont.querySelectorAll('.btn-boucher-deudor').forEach(b => b.addEventListener('click', () => {
-    const d = DB.deudores.find(x=>x.id===b.dataset.id); if (d) imprimirBoucherDeuda(d, 'deudor');
+    const d = DB.deudores.find(x=>x.id===b.dataset.id); if (d) imprimirCuentaDeuda(d);
   }));
-  cont.querySelectorAll('.btn-editar-deudor').forEach(b => b.addEventListener('click', () => abrirModalDeudor(b.dataset.id)));
   cont.querySelectorAll('.btn-eliminar-deudor').forEach(b => b.addEventListener('click', () => eliminarDeudor(b.dataset.id)));
 }
+
+// ---------- Vista de la cuenta ----------
+function abrirCuenta(id) {
+  cuentaActualId = id;
+  renderCuenta();
+  abrirModal('modal-cuenta');
+}
+
+function renderCuenta() {
+  const d = DB.deudores.find(x => x.id === cuentaActualId);
+  const cont = document.getElementById('cuenta-contenido');
+  if (!d || !cont) return;
+  const saldo = calcularSaldo(d);
+  const mov = movimientosDeCuenta(d);
+
+  const filas = mov.map(m => m.tipo === 'abono' ? `
+      <div class="cta-fila abono"><span>${esc(m.fecha)}</span><span class="cta-hora">${esc(m.hora)}</span><b>💵 ${esc(m.detalle)}</b><span></span><span class="cta-val">− ${fmt(m.valor)}</span><span></span></div>` : `
+      <div class="cta-fila"><span>${esc(m.fecha)}</span><span class="cta-hora">${esc(m.hora)}</span><b>${esc(m.detalle)}</b><span class="cta-der">${m.cant || ''}</span><span class="cta-der">${fmt(m.valor)}</span>
+        <span>${m.real ? `<button class="btn-peligro btn-quitar-cargo" data-idx="${m.idx}" style="padding:3px 7px" title="Quitar de la cuenta"><i class="ti ti-x"></i></button>` : ''}</span></div>`).join('');
+
+  cont.innerHTML = `
+    <div class="cta-cab">
+      <div>
+        <div class="cta-et">Cuenta abierta ${badgeCuenta(d)}</div>
+        <div class="cta-nombre">${esc(d.nombre)}</div>
+        <div class="cta-sub">CC ${esc(d.cedula)}${d.telefono ? ' · ' + esc(d.telefono) : ''}${d.nota ? ' · ' + esc(d.nota) : ''}${d.fechaLimite ? ' · Fecha límite ' + esc(d.fechaLimite) : ''}</div>
+      </div>
+      <div class="cta-botones">
+        <button class="btn-primary" id="cta-btn-cargo"><i class="ti ti-plus"></i> Agregar a la cuenta</button>
+        <button class="btn-secundario" id="cta-btn-abono" ${saldo <= 0 ? 'disabled' : ''}>💵 Registrar abono</button>
+        <button class="btn-secundario" id="cta-btn-imprimir"><i class="ti ti-printer"></i> Imprimir cuenta</button>
+        <button class="btn-secundario" id="cta-btn-editar" title="Editar nombre o fecha límite"><i class="ti ti-edit"></i></button>
+      </div>
+    </div>
+    <div class="cta-kpis">
+      <div class="cta-kpi"><span>Total fiado</span><b>${fmt(d.monto)}</b></div>
+      <div class="cta-kpi"><span>Abonado</span><b style="color:#1B6B43">${fmt(calcularAbonado(d))}</b></div>
+      <div class="cta-kpi saldo"><span>Saldo que debe</span><b>${fmt(saldo)}</b></div>
+    </div>
+    <div class="cta-fila cta-cabecera"><span>Fecha</span><span>Hora</span><span>Detalle</span><span class="cta-der">Cant.</span><span class="cta-der">Valor</span><span></span></div>
+    ${filas || '<p style="padding:14px 6px;color:var(--texto2);font-size:14px">Todavía no hay movimientos. Usa “Agregar a la cuenta” para anotar lo que se lleva el cliente.</p>'}`;
+
+  document.getElementById('cta-btn-cargo').addEventListener('click', abrirModalCargo);
+  document.getElementById('cta-btn-abono').addEventListener('click', () => abrirModalAbono(d.id, 'deudor'));
+  document.getElementById('cta-btn-imprimir').addEventListener('click', () => imprimirCuentaDeuda(d));
+  document.getElementById('cta-btn-editar').addEventListener('click', () => abrirModalDeudor(d.id));
+  cont.querySelectorAll('.btn-quitar-cargo').forEach(b => b.addEventListener('click', () => quitarCargo(d, parseInt(b.dataset.idx))));
+}
+
+// ---------- Agregar a la cuenta ----------
+function abrirModalCargo() {
+  cargoProductoSel = null;
+  ['cargo-buscar','cargo-detalle','cargo-precio','cargo-costo'].forEach(x => document.getElementById(x).value = '');
+  document.getElementById('cargo-cantidad').value = 1;
+  document.getElementById('cargo-resultados').innerHTML = '';
+  document.getElementById('cargo-producto-chip').classList.add('hidden');
+  actualizarTotalCargo();
+  abrirModal('modal-cargo');
+  setTimeout(() => document.getElementById('cargo-buscar').focus(), 100);
+}
+
+function seleccionarProductoCargo(p) {
+  cargoProductoSel = p;
+  document.getElementById('cargo-producto-nombre').textContent = p.nombre;
+  document.getElementById('cargo-producto-detalle').textContent = `Ref: ${p.ref} · Stock: ${p.stock}`;
+  document.getElementById('cargo-producto-chip').classList.remove('hidden');
+  document.getElementById('cargo-detalle').value = p.nombre;
+  document.getElementById('cargo-precio').value = p.pventa1;
+  document.getElementById('cargo-costo').value = p.pcompra;
+  actualizarTotalCargo();
+  document.getElementById('cargo-cantidad').focus();
+}
+
+function actualizarTotalCargo() {
+  const t = (parseFloat(document.getElementById('cargo-precio').value) || 0) * (parseInt(document.getElementById('cargo-cantidad').value) || 0);
+  document.getElementById('cargo-total').textContent = fmt(t);
+}
+
+async function guardarCargo() {
+  const d = DB.deudores.find(x => x.id === cuentaActualId);
+  if (!d) return;
+  const detalle = document.getElementById('cargo-detalle').value.trim();
+  const cantidad = parseInt(document.getElementById('cargo-cantidad').value) || 0;
+  const precio = parseFloat(document.getElementById('cargo-precio').value);
+  const costoTxt = document.getElementById('cargo-costo').value;
+  if (!detalle) { alert('Escribe el detalle de lo que se lleva'); return; }
+  if (cantidad < 1) { alert('La cantidad debe ser al menos 1'); return; }
+  if (!(precio >= 0) || isNaN(precio)) { alert('Ingresa el precio unitario'); return; }
+  const p = cargoProductoSel;
+  if (p && cantidad > p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${p.nombre}.`); return; }
+
+  const ahora = new Date();
+  const cargo = {
+    productoId: p ? p.id : '', ref: p ? p.ref : '', productoNombre: detalle,
+    cantidad, precioUnit: precio, costoUnit: costoTxt === '' ? null : (parseFloat(costoTxt) || 0),
+    fecha: fechaCO(ahora), hora: horaCO(ahora)
+  };
+  const antes = { productos: (d.productos || []).slice(), monto: d.monto, pagada: d.pagada };
+  const btn = document.getElementById('btn-guardar-cargo');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = 'Guardando...';
+  try {
+    // si había una "Deuda inicial" implícita, se mantiene porque monto sigue siendo la suma real
+    d.productos = (d.productos || []).concat([cargo]);
+    d.monto = (Number(d.monto) || 0) + precio * cantidad;
+    d.pagada = false;
+    const ok = await guardarDeudorEnSheet(d, false);
+    if (!ok) throw new Error('Google Sheets no confirmó el cambio.');
+    if (p) {
+      p.stock = Math.max(0, p.stock - cantidad);
+      await sheetsEscribir('update','Productos',[p.id,p.ref,p.nombre,p.pcompra,p.pventa1,p.pventa2,p.stock],p.id);
+    }
+    guardarLocal();
+    cerrarModal('modal-cargo');
+    renderCuenta(); renderDeudores(); renderDashboard();
+    mostrarToast('Agregado a la cuenta ✓');
+  } catch (e) {
+    Object.assign(d, antes);
+    guardarLocal();
+    alert('NO SE PUDO AGREGAR A LA CUENTA.\n\n' + (e && e.message ? e.message : String(e)));
+  } finally {
+    btn.disabled = false; btn.textContent = 'Agregar';
+  }
+}
+
+async function quitarCargo(d, idx) {
+  const c = (d.productos || [])[idx];
+  if (!c) return;
+  if (!confirm(`¿Quitar “${c.productoNombre}” de la cuenta? El saldo baja y, si era un producto del inventario, se devuelve al stock.`)) return;
+  const antes = { productos: d.productos.slice(), monto: d.monto };
+  d.productos = d.productos.filter((_, i) => i !== idx);
+  d.monto = Math.max(0, (Number(d.monto) || 0) - (Number(c.precioUnit) || 0) * (Number(c.cantidad) || 0));
+  d.pagada = calcularSaldo(d) <= 0 && d.monto > 0;
+  const ok = await guardarDeudorEnSheet(d, false);
+  if (!ok) { Object.assign(d, antes); alert('NO SE PUDO QUITAR DE LA CUENTA EN GOOGLE SHEETS.'); return; }
+  const p = c.productoId ? DB.productos.find(x => x.id === c.productoId) : null;
+  if (p) {
+    p.stock += (Number(c.cantidad) || 0);
+    await sheetsEscribir('update','Productos',[p.id,p.ref,p.nombre,p.pcompra,p.pventa1,p.pventa2,p.stock],p.id);
+  }
+  guardarLocal(); renderCuenta(); renderDeudores(); renderDashboard();
+  mostrarToast('Quitado de la cuenta');
+}
+
+// ---------- Impresión de la cuenta completa ----------
+function imprimirCuentaDeuda(d) {
+  const ahora = new Date();
+  const mov = movimientosDeCuenta(d);
+  let corrido = 0, totCargos = 0, totAbonos = 0;
+  const celda = 'border:1px solid #999;padding:5px 7px;';
+  const filas = mov.map(m => {
+    if (m.tipo === 'cargo') { corrido += m.valor; totCargos += m.valor; } else { corrido -= m.valor; totAbonos += m.valor; }
+    const abono = m.tipo === 'abono';
+    return `<tr style="${abono ? 'background:#f1f1f1' : ''}">
+      <td style="${celda}">${esc(m.fecha)}</td><td style="${celda}">${esc(m.hora)}</td>
+      <td style="${celda}">${abono ? '<b>ABONO</b> (' + esc(m.detalle.replace('Abono en ', '')) + ')' : esc(m.detalle)}</td>
+      <td style="${celda}text-align:right">${!abono && m.cant ? m.cant : ''}</td>
+      <td style="${celda}text-align:right">${!abono ? fmt(m.valor) : ''}</td>
+      <td style="${celda}text-align:right">${abono ? '<b>' + fmt(m.valor) + '</b>' : ''}</td>
+      <td style="${celda}text-align:right">${fmt(corrido)}</td></tr>`;
+  }).join('');
+  const saldo = calcularSaldo(d);
+
+  document.getElementById('deudor-print-contenido').innerHTML = `
+    <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:12px">
+      <div style="font-size:22px;font-weight:bold">PAPELERÍA KAREN</div>
+      <div style="font-size:13px;margin-top:2px">ESTADO DE CUENTA — CRÉDITO</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:12px">
+      <div><b>Cliente:</b> ${esc(d.nombre)}${d.nota ? ' — ' + esc(d.nota) : ''}<br><b>CC:</b> ${esc(d.cedula)}${d.telefono ? ' · <b>Tel:</b> ' + esc(d.telefono) : ''}</div>
+      <div style="text-align:right"><b>Impreso:</b> ${fechaCO(ahora)} · ${horaCO(ahora)}${mov.length ? '<br><b>Desde:</b> ' + esc(mov[0].fecha) : ''}${d.fechaLimite ? '<br><b>Fecha límite:</b> ' + esc(d.fechaLimite) : ''}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:#eee">
+        <th style="${celda}text-align:left">Fecha</th><th style="${celda}text-align:left">Hora</th><th style="${celda}text-align:left">Detalle</th>
+        <th style="${celda}text-align:right">Cant.</th><th style="${celda}text-align:right">Cargo</th><th style="${celda}text-align:right">Abono</th><th style="${celda}text-align:right">Saldo</th>
+      </tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    <div style="margin:16px 0 0 auto;width:300px;font-size:14px">
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>Total cargos</span><b>${fmt(totCargos)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>Total abonos</span><b>${fmt(totAbonos)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:2px solid #000;font-size:17px"><b>SALDO PENDIENTE</b><b>${fmt(saldo)}</b></div>
+    </div>
+    ${saldo <= 0 && d.monto > 0 ? '<p style="text-align:center;margin-top:10px;font-size:13px"><b>CUENTA CANCELADA EN SU TOTALIDAD</b></p>' : ''}
+    <div style="display:flex;gap:60px;margin-top:60px;font-size:12px;text-align:center"><div style="flex:1;border-top:1px solid #000;padding-top:4px">Firma del cliente</div><div style="flex:1;border-top:1px solid #000;padding-top:4px">Papelería Karen</div></div>`;
+  prepararImpresion('deudor-print');
+  window.print();
+}
+
+// ---------- Reportes: deudas ----------
+function renderDeudasReporte(enRango) {
+  const cont = document.getElementById('reporte-deudas');
+  if (!cont) return;
+  const cuentas = DB.deudores || [];
+  const conSaldo = cuentas.filter(d => calcularSaldo(d) > 0);
+  const totalDeben = conSaldo.reduce((a, d) => a + calcularSaldo(d), 0);
+  const clientes = new Set(conSaldo.map(d => d.cedula || d.nombre)).size;
+
+  let fiado = 0, abonado = 0, ganTotal = 0, ganCobrada = 0;
+  cuentas.forEach(d => {
+    const cargos = cargosDeCuenta(d).filter(c => enRango(c.fecha));
+    fiado += cargos.reduce((a, c) => a + c.valor, 0);
+    const g = cargos.filter(c => c.real).reduce((a, c) => a + (c.valor - c.costo), 0);
+    ganTotal += g;
+    const ratio = d.monto > 0 ? Math.min(1, calcularAbonado(d) / d.monto) : 0;
+    ganCobrada += g * ratio;
+    abonado += (d.abonos || []).filter(a => enRango(a.fecha)).reduce((s, a) => s + (Number(a.monto) || 0), 0);
+  });
+  const ganPend = ganTotal - ganCobrada;
+
+  const lista = conSaldo.slice().sort((a, b) => calcularSaldo(b) - calcularSaldo(a)).slice(0, 15).map(d => {
+    const u = ultimoMovimientoCuenta(d);
+    return `<tr><td>${esc(d.nombre)}${d.nota ? `<div style="font-size:11px;color:var(--texto2)">${esc(d.nota)}</div>` : ''}</td>
+      <td style="text-align:right">${fmt(d.monto)}</td><td style="text-align:right">${fmt(calcularAbonado(d))}</td>
+      <td style="text-align:right;font-weight:600">${fmt(calcularSaldo(d))}</td>
+      <td style="font-size:12px;color:var(--texto2)">${u ? esc(u.fecha) + ' · ' + esc(u.detalle) : '-'}</td><td>${badgeCuenta(d)}</td></tr>`;
+  }).join('');
+
+  cont.innerHTML = `
+    <div class="rep-neto-grid">
+      <div class="reporte-pago-card destacada"><div class="rp-label">Total que te deben hoy</div><div class="rp-value">${fmt(totalDeben)}</div><div class="rp-sub">${conSaldo.length} cuenta(s) · ${clientes} cliente(s)</div></div>
+      <div class="reporte-pago-card"><div class="rp-label">Fiado en el periodo</div><div class="rp-value">${fmt(fiado)}</div><div class="rp-sub">ventas a crédito</div></div>
+      <div class="reporte-pago-card"><div class="rp-label">Abonado en el periodo</div><div class="rp-value" style="color:#1B6B43">${fmt(abonado)}</div><div class="rp-sub">ya cobrado</div></div>
+      <div class="reporte-pago-card"><div class="rp-label">Ganancia en fiados</div><div class="rp-value">${fmt(ganTotal)}</div><div class="rp-sub">${fmt(ganCobrada)} cobrada · ${fmt(ganPend)} pendiente</div></div>
+    </div>
+    ${lista ? `<div class="card" style="margin-top:1rem"><div class="section-header"><h2 style="font-size:17px">Quién te debe</h2></div>
+      <div class="tabla-wrap"><table><thead><tr><th>Cliente / cuenta</th><th style="text-align:right">Fiado</th><th style="text-align:right">Abonado</th><th style="text-align:right">Saldo</th><th>Último movimiento</th><th>Estado</th></tr></thead><tbody>${lista}</tbody></table></div></div>`
+      : '<p style="font-size:13px;color:var(--texto2);margin-top:.75rem">No hay cuentas con saldo pendiente.</p>'}`;
+}
+
+// Ventas para la gráfica de más vendidos: los abonos de deudas no cuentan (se cuentan los
+// productos cuando se fían), así nada se cuenta dos veces.
+function ventasParaTop(ventas, enRango) {
+  const normales = ventas.filter(v => !/^(Abono deuda|Anticipo)/i.test(v.nota || ''));
+  const fiados = [];
+  (DB.deudores || []).forEach(d => cargosDeCuenta(d).filter(c => c.real && enRango(c.fecha)).forEach(c =>
+    fiados.push({ items: [{ nombre: c.detalle, cantidad: c.cant, total: c.valor }] })));
+  return normales.concat(fiados);
+}
+
 
 // =============================================
 // ANTICIPOS (el producto se queda en el inventario hasta pagar todo)
@@ -3816,8 +3993,8 @@ function renderTop(contId, ventas, mini) {
 function renderTopResumen() {
   const hoy = parseFechaCO(fechaCO());
   const ini = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-  const ventas = DB.ventas.filter(v => { const d = parseFechaCO(v.fecha); return d >= ini && d <= hoy; });
-  renderTop('dash-top', ventas, true);
+  const enMes = f => { const d = parseFechaCO(f); return d >= ini && d <= hoy; };
+  renderTop('dash-top', ventasParaTop(DB.ventas.filter(v => enMes(v.fecha)), enMes), true);
 }
 
 function renderReportes(periodo) {
@@ -3931,7 +4108,8 @@ function renderReportes(periodo) {
       : `<p style="font-size:13px;color:var(--texto2)">Sin costos registrados en este periodo.</p>`;
   }
 
-  renderTop('reporte-top', ventas, false);
+  renderTop('reporte-top', ventasParaTop(ventas, enRango), false);
+  renderDeudasReporte(enRango);
 
 }
 
@@ -4384,7 +4562,10 @@ document.addEventListener('DOMContentLoaded', () => {
   inicializarBuscadorCliente('deudor', 'deudor-cliente-buscar', 'deudor-cliente-resultados', seleccionarClienteDeudor);
   document.getElementById('btn-nuevo-cliente-deudor').addEventListener('click', () => abrirModalNuevoCliente('deudor'));
   document.getElementById('btn-quitar-cliente-deudor').addEventListener('click', quitarClienteDeudor);
-  inicializarBuscadorProducto('deudor', 'deudor-producto-buscar', 'deudor-producto-resultados', agregarProductoDeudor);
+  inicializarBuscadorProducto('cargo', 'cargo-buscar', 'cargo-resultados', seleccionarProductoCargo);
+  document.getElementById('btn-quitar-producto-cargo').addEventListener('click', () => { cargoProductoSel = null; document.getElementById('cargo-producto-chip').classList.add('hidden'); });
+  document.getElementById('btn-guardar-cargo').addEventListener('click', guardarCargo);
+  ['cargo-cantidad','cargo-precio'].forEach(i => document.getElementById(i).addEventListener('input', actualizarTotalCargo));
   document.getElementById('btn-abrir-modal-deudor').addEventListener('click', () => abrirModalDeudor(null));
   document.getElementById('btn-guardar-deudor').addEventListener('click', guardarDeudor);
   document.getElementById('btn-guardar-abono').addEventListener('click', guardarAbono);
