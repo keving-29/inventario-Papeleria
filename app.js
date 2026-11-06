@@ -2022,7 +2022,7 @@ function seleccionarProductoCargo(p) {
   const precios = [['Precio 1 — normal', p.pventa1]];
   if (p.pventa2 > 0) precios.push(['Precio 2 — especial', p.pventa2]);
   const cont = document.getElementById('cargo-precios');
-  cont.innerHTML = precios.map(x => `<button type="button" class="ce-precio" data-p="${x[1]}"><small>${x[0]}</small><b>${fmt(x[1])}</b></button>`).join('');
+  cont.innerHTML = precios.map((x, i) => `<button type="button" class="ce-precio" data-p="${x[1]}"><small>[${i + 1}] ${x[0]}</small><b>${fmt(x[1])}</b></button>`).join('');
   cont.querySelectorAll('.ce-precio').forEach(b => b.addEventListener('click', () => anadirProductoCargo(parseFloat(b.dataset.p))));
   document.getElementById('cargo-elegido').classList.remove('hidden');
   const c = document.getElementById('cargo-cantidad'); c.focus(); c.select();
@@ -2045,12 +2045,13 @@ function anadirProductoCargo(precio) {
 function renderListaCargo() {
   const cont = document.getElementById('cargo-lista');
   if (!cont) return;
-  if (!cargoLista.length) { cont.innerHTML = '<div class="cargo-lista-caja"><div class="cargo-lista-tit">Se agregará a la cuenta</div><p style="color:var(--texto2);font-size:13px;margin:8px 0">Aún no has agregado productos. Busca uno, elige cantidad y precio.</p></div>'; return; }
+  if (!cargoLista.length) { cont.innerHTML = '<div class="cargo-lista-caja"><div class="cargo-lista-tit">Se agregará a la cuenta</div><p style="color:var(--texto2);font-size:13px;margin:8px 0">Aún no has agregado productos. Busca uno, Enter, cantidad, Enter y presiona 1 o 2 para el precio.</p></div>'; return; }
   const total = cargoLista.reduce((s, x) => s + x.precioUnit * x.cantidad, 0);
   cont.innerHTML = `<div class="cargo-lista-caja">
     <div class="cargo-lista-tit">Se agregará a la cuenta (${cargoLista.length})</div>
     ${cargoLista.map((x, i) => `<div class="cargo-lista-fila"><span class="cl-n">${esc(x.productoNombre)}<small>${x.cantidad} × ${fmt(x.precioUnit)}</small></span><b>${fmt(x.precioUnit * x.cantidad)}</b><button type="button" class="btn-peligro btn-quitar-cargo-lista" data-i="${i}" style="padding:3px 7px"><i class="ti ti-x"></i></button></div>`).join('')}
     <div class="cargo-lista-total"><span>Total a agregar</span><b>${fmt(total)}</b></div>
+    <p class="cargo-hint">Con el buscador vacío, presiona Enter para guardar en la cuenta.</p>
   </div>`;
   cont.querySelectorAll('.btn-quitar-cargo-lista').forEach(b => b.addEventListener('click', () => { cargoLista.splice(parseInt(b.dataset.i), 1); renderListaCargo(); }));
 }
@@ -4710,6 +4711,22 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-quitar-producto-cargo').addEventListener('click', () => { cargoProductoSel = null; document.getElementById('cargo-elegido').classList.add('hidden'); });
   document.getElementById('btn-cargo-precio-otro').addEventListener('click', () => anadirProductoCargo(parseFloat(document.getElementById('cargo-precio-otro').value)));
   document.getElementById('cargo-cantidad').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const b = document.querySelector('#cargo-precios .ce-precio'); if (b) b.focus(); } });
+  // Teclado: en la cantidad Enter pasa a los precios; con 1 o 2 (o flechas + Enter) se elige el precio.
+  document.getElementById('cargo-precios').addEventListener('keydown', e => {
+    const bs = Array.from(document.querySelectorAll('#cargo-precios .ce-precio'));
+    const i = bs.indexOf(document.activeElement);
+    if (e.key === '1' || e.key === '2') { const b = bs[parseInt(e.key) - 1]; if (b) { e.preventDefault(); b.click(); } }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); if (bs[i + 1]) bs[i + 1].focus(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); if (bs[i - 1]) bs[i - 1].focus(); }
+  });
+  document.getElementById('modal-cargo').addEventListener('keydown', e => {
+    if (e.key === 'Escape' && cargoProductoSel) { e.stopPropagation(); cargoProductoSel = null; document.getElementById('cargo-elegido').classList.add('hidden'); document.getElementById('cargo-buscar').focus(); }
+  });
+  // Con el buscador vacío y productos en la lista, Enter guarda la cuenta.
+  document.getElementById('cargo-buscar').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.value === '' && cargoLista.length) { e.preventDefault(); guardarCargo(); }
+  }, true); // en captura: se evalúa ANTES de que el buscador limpie el texto al elegir
+  document.getElementById('cargo-precio-otro').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-cargo-precio-otro').click(); } });
   document.getElementById('cargo-menos').addEventListener('click', () => { const i = document.getElementById('cargo-cantidad'); i.value = Math.max(1, (parseInt(i.value) || 1) - 1); });
   document.getElementById('cargo-mas').addEventListener('click', () => { const i = document.getElementById('cargo-cantidad'); i.value = (parseInt(i.value) || 0) + 1; });
   document.getElementById('btn-cargo-anadir').addEventListener('click', anadirCargoALista);
