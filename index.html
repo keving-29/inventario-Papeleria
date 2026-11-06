@@ -714,41 +714,51 @@
 
   <!-- MODAL: Agregar algo a la cuenta -->
   <div id="modal-cargo" class="modal-bg hidden">
-    <div class="modal" style="max-width:440px">
+    <div class="modal modal-grande">
       <div class="modal-header">
         <h3>Agregar a la cuenta</h3>
         <button class="btn-cerrar-modal" data-modal="modal-cargo">✕</button>
       </div>
-      <div id="cargo-busqueda-box">
-        <input type="text" id="cargo-buscar" placeholder="Buscar producto por nombre o código...">
-        <div id="cargo-resultados"></div>
-      </div>
-      <div id="cargo-elegido" class="cargo-elegido hidden">
-        <div class="ce-top">
-          <div><strong id="cargo-producto-nombre"></strong><span id="cargo-producto-detalle"></span></div>
-          <button type="button" class="btn-peligro" id="btn-quitar-producto-cargo" style="padding:6px 10px"><i class="ti ti-x"></i></button>
+      <div class="cargo-cols">
+        <div class="cargo-izq">
+          <div id="cargo-busqueda-box">
+            <input type="text" id="cargo-buscar" placeholder="Buscar producto y presiona Enter...">
+            <div id="cargo-resultados"></div>
+          </div>
+          <div id="cargo-elegido" class="cargo-elegido hidden">
+            <div class="ce-top">
+              <div><strong id="cargo-producto-nombre"></strong><span id="cargo-producto-detalle"></span></div>
+              <button type="button" class="btn-peligro" id="btn-quitar-producto-cargo" style="padding:6px 10px"><i class="ti ti-x"></i></button>
+            </div>
+            <div class="ce-cant">
+              <span>Cantidad</span>
+              <button type="button" class="ce-mas" id="cargo-menos">−</button>
+              <input type="number" id="cargo-cantidad" min="1" value="1">
+              <button type="button" class="ce-mas" id="cargo-mas">+</button>
+            </div>
+            <div class="ce-precios" id="cargo-precios"></div>
+            <div class="ce-otro-precio">
+              <input type="number" id="cargo-precio-otro" min="0" placeholder="Otro precio...">
+              <button type="button" class="btn-secundario" id="btn-cargo-precio-otro">Usar</button>
+            </div>
+          </div>
+          <details class="cargo-otro" id="cargo-otro">
+            <summary>Otro (algo que no está en el inventario)</summary>
+            <input type="text" id="cargo-detalle" placeholder="Detalle (ej: Fotocopias B/N)">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <input type="number" id="cargo-cantidad-manual" min="1" value="1" placeholder="Cantidad">
+              <input type="number" id="cargo-precio" min="0" placeholder="Precio unitario">
+            </div>
+            <button type="button" class="btn-secundario" id="btn-cargo-anadir" style="width:100%;margin-bottom:6px"><i class="ti ti-plus"></i> Añadir</button>
+          </details>
         </div>
-        <div class="ce-cant">
-          <span>Cantidad</span>
-          <button type="button" class="ce-mas" id="cargo-menos">−</button>
-          <input type="number" id="cargo-cantidad" min="1" value="1">
-          <button type="button" class="ce-mas" id="cargo-mas">+</button>
+        <div class="cargo-der">
+          <div id="cargo-lista"></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn-cerrar-modal" data-modal="modal-cargo" style="flex:1">Cancelar</button>
+            <button class="btn-primary" id="btn-guardar-cargo" style="flex:1">Guardar en la cuenta</button>
+          </div>
         </div>
-        <div class="ce-precios" id="cargo-precios"></div>
-      </div>
-      <details class="cargo-otro" id="cargo-otro">
-        <summary>Otro (algo que no está en el inventario)</summary>
-        <input type="text" id="cargo-detalle" placeholder="Detalle (ej: Fotocopias B/N)">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <input type="number" id="cargo-cantidad-manual" min="1" value="1" placeholder="Cantidad">
-          <input type="number" id="cargo-precio" min="0" placeholder="Precio unitario">
-        </div>
-        <button type="button" class="btn-secundario" id="btn-cargo-anadir" style="width:100%;margin-bottom:6px"><i class="ti ti-plus"></i> Añadir</button>
-      </details>
-      <div id="cargo-lista"></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn-cerrar-modal" data-modal="modal-cargo" style="flex:1">Cancelar</button>
-        <button class="btn-primary" id="btn-guardar-cargo" style="flex:1">Guardar en la cuenta</button>
       </div>
     </div>
   </div>

@@ -1054,3 +1054,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--rosa); backgroun
 .ce-precio:active { transform: scale(.97); }
 .cargo-otro { margin-bottom: 12px; }
 .cargo-otro summary { cursor: pointer; font-size: 13px; color: var(--texto2); padding: 6px 0; }
+
+.modal-grande { max-width: 980px; width: 96%; min-height: 70vh; }
+.cargo-cols { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 860px) { .cargo-cols { grid-template-columns: 1.15fr 1fr; } .cargo-der { position: sticky; top: 0; align-self: start; } }
+.cargo-der .cargo-lista-caja { min-height: 140px; }
+.cargo-der:empty { display: none; }
+.ce-otro-precio { display: flex; gap: 8px; margin-top: 8px; }
+.ce-otro-precio input { margin: 0; flex: 1; }
+.ce-precio:focus { outline: 3px solid var(--rosa-oscuro); }

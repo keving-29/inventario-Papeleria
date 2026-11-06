@@ -341,7 +341,7 @@ function productoCoincideTexto(p, q) {
   // (en cualquier orden): "lapiz mongol" encuentra "MONGOL LAPIZ NEGRO", etc.
   const texto = (p.nombre + ' ' + p.ref + ' ' + (p.codigoBarras || '')).toLowerCase();
   const partes = String(q).toLowerCase().split(/\s+/).filter(Boolean);
-  return partes.length > 0 && partes.every(t => texto.includes(t));
+  return partes.every(t => texto.includes(t));
 }
 
 // Coincidencia EXACTA por Ref o código de barras — esto es lo que distingue
@@ -1687,7 +1687,7 @@ function imprimirBoucherDeuda(d, tipo) {
     cuerpo: productos.length ? `<table class="pk-tabla"><thead><tr><th>Código</th><th>Producto</th><th class="cen">Cant.</th><th class="der">Precio</th><th class="der">Total</th></tr></thead><tbody>${filasProductos}</tbody></table>` : '',
     extra: abonos.length ? `<div class="pk-subtit">${esDeuda?'Abonos realizados':'Anticipos realizados'}</div>
       <table class="pk-tabla"><thead><tr><th>#</th><th>Fecha</th><th>Método</th><th class="der">Monto</th></tr></thead><tbody>${filasAbonos}</tbody></table>` : '',
-    totales: pkFila('Monto total', fmt(d.monto)) + pkFila('Abonado', fmt(calcularAbonado(d))) + pkFila('Saldo pendiente', fmt(saldo), 'gran'),
+    totales: pkFila('Monto total', fmt(d.monto)) + pkFila('Abonado', fmt(calcularAbonado(d))) + desglosePagos(d) + pkFila('Saldo pendiente', fmt(saldo), 'gran'),
     sello: saldo<=0 ? (esDeuda ? 'DEUDA CANCELADA EN SU TOTALIDAD' : 'ANTICIPO CANCELADO — PRODUCTO ENTREGADO') : '',
     firmas: true,
     pie: 'Gracias por su confianza'
@@ -1996,7 +1996,7 @@ let cargoLista = [];
 
 function limpiarFormularioCargo() {
   cargoProductoSel = null;
-  ['cargo-buscar','cargo-detalle','cargo-precio'].forEach(x => document.getElementById(x).value = '');
+  ['cargo-buscar','cargo-detalle','cargo-precio','cargo-precio-otro'].forEach(x => document.getElementById(x).value = '');
   document.getElementById('cargo-cantidad').value = 1;
   document.getElementById('cargo-cantidad-manual').value = 1;
   document.getElementById('cargo-resultados').innerHTML = '';
@@ -2012,18 +2012,20 @@ function abrirModalCargo() {
   setTimeout(() => document.getElementById('cargo-buscar').focus(), 100);
 }
 
-// Al elegir un producto salen sus precios como botones: un toque y queda agregado.
+// Igual que en Vender: buscar, elegir, cantidad y precio (Precio 1, Precio 2 o uno escrito).
 function seleccionarProductoCargo(p) {
   cargoProductoSel = p;
   document.getElementById('cargo-producto-nombre').textContent = p.nombre;
   document.getElementById('cargo-producto-detalle').textContent = `Ref: ${p.ref} · Stock: ${p.stock}`;
   document.getElementById('cargo-cantidad').value = 1;
-  const precios = [['Precio 1', p.pventa1]];
-  if (p.pventa2 > 0 && p.pventa2 !== p.pventa1) precios.push(['Precio 2', p.pventa2]);
+  document.getElementById('cargo-precio-otro').value = '';
+  const precios = [['Precio 1 — normal', p.pventa1]];
+  if (p.pventa2 > 0) precios.push(['Precio 2 — especial', p.pventa2]);
   const cont = document.getElementById('cargo-precios');
   cont.innerHTML = precios.map(x => `<button type="button" class="ce-precio" data-p="${x[1]}"><small>${x[0]}</small><b>${fmt(x[1])}</b></button>`).join('');
   cont.querySelectorAll('.ce-precio').forEach(b => b.addEventListener('click', () => anadirProductoCargo(parseFloat(b.dataset.p))));
   document.getElementById('cargo-elegido').classList.remove('hidden');
+  const c = document.getElementById('cargo-cantidad'); c.focus(); c.select();
 }
 
 function anadirProductoCargo(precio) {
@@ -2031,9 +2033,10 @@ function anadirProductoCargo(precio) {
   if (!p) return;
   const cantidad = parseInt(document.getElementById('cargo-cantidad').value) || 0;
   if (cantidad < 1) { alert('La cantidad debe ser al menos 1'); return; }
-  const yaEnLista = cargoLista.filter(x => x.productoId === p.id).reduce((s, x) => s + x.cantidad, 0);
-  if (yaEnLista + cantidad > p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${p.nombre}` + (yaEnLista ? ` (ya agregaste ${yaEnLista} en esta lista).` : '.')); return; }
-  cargoLista.push({ productoId: p.id, ref: p.ref, productoNombre: p.nombre, cantidad, precioUnit: precio, costoUnit: p.pcompra });
+  if (isNaN(precio) || precio < 0) { alert('Ingresa un precio válido'); return; }
+  const ya = cargoLista.find(x => x.productoId === p.id && x.precioUnit === precio);
+  if (ya) ya.cantidad += cantidad;
+  else cargoLista.push({ productoId: p.id, ref: p.ref, productoNombre: p.nombre, cantidad, precioUnit: precio, costoUnit: p.pcompra });
   limpiarFormularioCargo();
   renderListaCargo();
   document.getElementById('cargo-buscar').focus();
@@ -2042,7 +2045,7 @@ function anadirProductoCargo(precio) {
 function renderListaCargo() {
   const cont = document.getElementById('cargo-lista');
   if (!cont) return;
-  if (!cargoLista.length) { cont.innerHTML = ''; return; }
+  if (!cargoLista.length) { cont.innerHTML = '<div class="cargo-lista-caja"><div class="cargo-lista-tit">Se agregará a la cuenta</div><p style="color:var(--texto2);font-size:13px;margin:8px 0">Aún no has agregado productos. Busca uno, elige cantidad y precio.</p></div>'; return; }
   const total = cargoLista.reduce((s, x) => s + x.precioUnit * x.cantidad, 0);
   cont.innerHTML = `<div class="cargo-lista-caja">
     <div class="cargo-lista-tit">Se agregará a la cuenta (${cargoLista.length})</div>
@@ -2130,6 +2133,17 @@ async function quitarCargo(d, idx) {
   mostrarToast('Quitado de la cuenta');
 }
 
+// Cuánto se pagó en efectivo y cuánto por transferencia (suma de los abonos).
+function desglosePagos(d) {
+  let ef = 0, tr = 0;
+  (d.abonos || []).forEach(x => {
+    const m = Number(x.monto) || 0;
+    if (x.metodoPago === 'mixto') { ef += Number(x.efectivo != null ? x.efectivo : x.pagoEf) || 0; tr += Number(x.transferencia != null ? x.transferencia : x.pagoTr) || 0; }
+    else if (x.metodoPago === 'transferencia') tr += m; else ef += m;
+  });
+  return pkFila('Pagado en efectivo', fmt(ef)) + pkFila('Pagado por transferencia', fmt(tr));
+}
+
 // ---------- Impresión de la cuenta completa ----------
 function imprimirCuentaDeuda(d) {
   const ahora = new Date();
@@ -2155,7 +2169,7 @@ function imprimirCuentaDeuda(d) {
     fecha: fechaCO(ahora), hora: horaCO(ahora),
     datos: [['Cliente', d.nombre + (d.nota ? ' — ' + d.nota : '')], ['Cédula', d.cedula], ['Teléfono', d.telefono], ['Desde', mov.length ? mov[0].fecha : ''], ['Fecha límite', d.fechaLimite]],
     cuerpo: `<table class="pk-tabla"><thead><tr><th>Fecha</th><th>Hora</th><th>Detalle</th><th class="der">Cant.</th><th class="der">Cargo</th><th class="der">Abono</th><th class="der">Saldo</th></tr></thead><tbody>${filas}</tbody></table>`,
-    totales: pkFila('Total cargos', fmt(totCargos)) + pkFila('Total abonos', fmt(totAbonos)) + pkFila('SALDO PENDIENTE', fmt(saldo), 'gran'),
+    totales: pkFila('Total cargos', fmt(totCargos)) + pkFila('Total abonos', fmt(totAbonos)) + desglosePagos(d) + pkFila('SALDO PENDIENTE', fmt(saldo), 'gran'),
     sello: saldo <= 0 && d.monto > 0 ? 'CUENTA CANCELADA EN SU TOTALIDAD' : '',
     firmas: true,
     pie: 'Gracias por su confianza'
@@ -4694,6 +4708,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-quitar-cliente-deudor').addEventListener('click', quitarClienteDeudor);
   inicializarBuscadorProducto('cargo', 'cargo-buscar', 'cargo-resultados', seleccionarProductoCargo);
   document.getElementById('btn-quitar-producto-cargo').addEventListener('click', () => { cargoProductoSel = null; document.getElementById('cargo-elegido').classList.add('hidden'); });
+  document.getElementById('btn-cargo-precio-otro').addEventListener('click', () => anadirProductoCargo(parseFloat(document.getElementById('cargo-precio-otro').value)));
+  document.getElementById('cargo-cantidad').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const b = document.querySelector('#cargo-precios .ce-precio'); if (b) b.focus(); } });
   document.getElementById('cargo-menos').addEventListener('click', () => { const i = document.getElementById('cargo-cantidad'); i.value = Math.max(1, (parseInt(i.value) || 1) - 1); });
   document.getElementById('cargo-mas').addEventListener('click', () => { const i = document.getElementById('cargo-cantidad'); i.value = (parseInt(i.value) || 0) + 1; });
   document.getElementById('btn-cargo-anadir').addEventListener('click', anadirCargoALista);
