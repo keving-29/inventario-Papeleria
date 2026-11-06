@@ -1038,3 +1038,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--rosa); backgroun
 .est-c .pk-sello { border: 1px solid #111; padding: 6px 0; }
 .est-c .pk-pie { letter-spacing: 3px; text-transform: uppercase; font-size: 10px; color: #666; }
 :is(#venta-print,#deudor-print,#proveedor-print,#cotizacion-print) .pk-doc .pk-tabla .nw { white-space: nowrap; }
+
+.cargo-elegido { border: 1.5px solid var(--rosa); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; background: var(--rosa-claro); }
+.ce-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.ce-top strong { display: block; font-size: 15px; }
+.ce-top span { font-size: 12px; color: var(--texto2); }
+.ce-cant { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.ce-cant span { flex: 1; font-size: 13px; font-weight: 500; }
+.ce-cant input { width: 70px; text-align: center; margin: 0; }
+.ce-mas { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--borde); background: #fff; font-size: 20px; cursor: pointer; color: var(--rosa); }
+.ce-precios { display: flex; gap: 8px; }
+.ce-precio { flex: 1; padding: 12px 8px; border-radius: 12px; border: none; background: var(--rosa); color: #fff; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ce-precio small { font-size: 11px; opacity: .85; }
+.ce-precio b { font-size: 18px; }
+.ce-precio:active { transform: scale(.97); }
+.cargo-otro { margin-bottom: 12px; }
+.cargo-otro summary { cursor: pointer; font-size: 13px; color: var(--texto2); padding: 6px 0; }

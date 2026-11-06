@@ -1996,11 +1996,12 @@ let cargoLista = [];
 
 function limpiarFormularioCargo() {
   cargoProductoSel = null;
-  ['cargo-buscar','cargo-detalle','cargo-precio','cargo-costo'].forEach(x => document.getElementById(x).value = '');
+  ['cargo-buscar','cargo-detalle','cargo-precio'].forEach(x => document.getElementById(x).value = '');
   document.getElementById('cargo-cantidad').value = 1;
+  document.getElementById('cargo-cantidad-manual').value = 1;
   document.getElementById('cargo-resultados').innerHTML = '';
-  document.getElementById('cargo-producto-chip').classList.add('hidden');
-  actualizarTotalCargo();
+  document.getElementById('cargo-elegido').classList.add('hidden');
+  document.getElementById('cargo-otro').open = false;
 }
 
 function abrirModalCargo() {
@@ -2011,22 +2012,31 @@ function abrirModalCargo() {
   setTimeout(() => document.getElementById('cargo-buscar').focus(), 100);
 }
 
+// Al elegir un producto salen sus precios como botones: un toque y queda agregado.
 function seleccionarProductoCargo(p) {
   cargoProductoSel = p;
   document.getElementById('cargo-producto-nombre').textContent = p.nombre;
   document.getElementById('cargo-producto-detalle').textContent = `Ref: ${p.ref} · Stock: ${p.stock}`;
-  document.getElementById('cargo-producto-chip').classList.remove('hidden');
-  document.getElementById('cargo-detalle').value = p.nombre;
-  document.getElementById('cargo-precio').value = p.pventa1;
-  document.getElementById('cargo-costo').value = p.pcompra;
-  actualizarTotalCargo();
-  document.getElementById('cargo-cantidad').focus();
-  document.getElementById('cargo-cantidad').select();
+  document.getElementById('cargo-cantidad').value = 1;
+  const precios = [['Precio 1', p.pventa1]];
+  if (p.pventa2 > 0 && p.pventa2 !== p.pventa1) precios.push(['Precio 2', p.pventa2]);
+  const cont = document.getElementById('cargo-precios');
+  cont.innerHTML = precios.map(x => `<button type="button" class="ce-precio" data-p="${x[1]}"><small>${x[0]}</small><b>${fmt(x[1])}</b></button>`).join('');
+  cont.querySelectorAll('.ce-precio').forEach(b => b.addEventListener('click', () => anadirProductoCargo(parseFloat(b.dataset.p))));
+  document.getElementById('cargo-elegido').classList.remove('hidden');
 }
 
-function actualizarTotalCargo() {
-  const t = (parseFloat(document.getElementById('cargo-precio').value) || 0) * (parseInt(document.getElementById('cargo-cantidad').value) || 0);
-  document.getElementById('cargo-total').textContent = fmt(t);
+function anadirProductoCargo(precio) {
+  const p = cargoProductoSel;
+  if (!p) return;
+  const cantidad = parseInt(document.getElementById('cargo-cantidad').value) || 0;
+  if (cantidad < 1) { alert('La cantidad debe ser al menos 1'); return; }
+  const yaEnLista = cargoLista.filter(x => x.productoId === p.id).reduce((s, x) => s + x.cantidad, 0);
+  if (yaEnLista + cantidad > p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${p.nombre}` + (yaEnLista ? ` (ya agregaste ${yaEnLista} en esta lista).` : '.')); return; }
+  cargoLista.push({ productoId: p.id, ref: p.ref, productoNombre: p.nombre, cantidad, precioUnit: precio, costoUnit: p.pcompra });
+  limpiarFormularioCargo();
+  renderListaCargo();
+  document.getElementById('cargo-buscar').focus();
 }
 
 function renderListaCargo() {
@@ -2042,33 +2052,17 @@ function renderListaCargo() {
   cont.querySelectorAll('.btn-quitar-cargo-lista').forEach(b => b.addEventListener('click', () => { cargoLista.splice(parseInt(b.dataset.i), 1); renderListaCargo(); }));
 }
 
-// Valida lo que hay en el formulario y lo devuelve como cargo (sin fecha/hora todavía).
-function leerFormularioCargo() {
-  const detalle = document.getElementById('cargo-detalle').value.trim();
-  const cantidad = parseInt(document.getElementById('cargo-cantidad').value) || 0;
-  const precio = parseFloat(document.getElementById('cargo-precio').value);
-  const costoTxt = document.getElementById('cargo-costo').value;
-  if (!detalle) { alert('Escribe el detalle de lo que se lleva'); return null; }
-  if (cantidad < 1) { alert('La cantidad debe ser al menos 1'); return null; }
-  if (!(precio >= 0) || isNaN(precio)) { alert('Ingresa el precio unitario'); return null; }
-  const p = cargoProductoSel;
-  if (p) {
-    const yaEnLista = cargoLista.filter(x => x.productoId === p.id).reduce((s, x) => s + x.cantidad, 0);
-    if (yaEnLista + cantidad > p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${p.nombre}` + (yaEnLista ? ` (ya agregaste ${yaEnLista} en esta lista).` : '.')); return null; }
-  }
-  return {
-    productoId: p ? p.id : '', ref: p ? p.ref : '', productoNombre: detalle,
-    cantidad, precioUnit: precio, costoUnit: costoTxt === '' ? null : (parseFloat(costoTxt) || 0)
-  };
-}
-
+// Item libre (sin inventario)
 function anadirCargoALista() {
-  const it = leerFormularioCargo();
-  if (!it) return false;
-  cargoLista.push(it);
+  const detalle = document.getElementById('cargo-detalle').value.trim();
+  const cantidad = parseInt(document.getElementById('cargo-cantidad-manual').value) || 0;
+  const precio = parseFloat(document.getElementById('cargo-precio').value);
+  if (!detalle) { alert('Escribe el detalle de lo que se lleva'); return false; }
+  if (cantidad < 1) { alert('La cantidad debe ser al menos 1'); return false; }
+  if (isNaN(precio) || precio < 0) { alert('Ingresa el precio unitario'); return false; }
+  cargoLista.push({ productoId: '', ref: '', productoNombre: detalle, cantidad, precioUnit: precio, costoUnit: null });
   limpiarFormularioCargo();
   renderListaCargo();
-  document.getElementById('cargo-buscar').focus();
   return true;
 }
 
@@ -4699,11 +4693,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-nuevo-cliente-deudor').addEventListener('click', () => abrirModalNuevoCliente('deudor'));
   document.getElementById('btn-quitar-cliente-deudor').addEventListener('click', quitarClienteDeudor);
   inicializarBuscadorProducto('cargo', 'cargo-buscar', 'cargo-resultados', seleccionarProductoCargo);
-  document.getElementById('btn-quitar-producto-cargo').addEventListener('click', () => { cargoProductoSel = null; document.getElementById('cargo-producto-chip').classList.add('hidden'); });
-  document.getElementById('btn-guardar-cargo').addEventListener('click', guardarCargo);
-  ['cargo-cantidad','cargo-precio'].forEach(i => document.getElementById(i).addEventListener('input', actualizarTotalCargo));
+  document.getElementById('btn-quitar-producto-cargo').addEventListener('click', () => { cargoProductoSel = null; document.getElementById('cargo-elegido').classList.add('hidden'); });
+  document.getElementById('cargo-menos').addEventListener('click', () => { const i = document.getElementById('cargo-cantidad'); i.value = Math.max(1, (parseInt(i.value) || 1) - 1); });
+  document.getElementById('cargo-mas').addEventListener('click', () => { const i = document.getElementById('cargo-cantidad'); i.value = (parseInt(i.value) || 0) + 1; });
   document.getElementById('btn-cargo-anadir').addEventListener('click', anadirCargoALista);
-  ['cargo-cantidad','cargo-precio','cargo-costo','cargo-detalle'].forEach(i => document.getElementById(i).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); anadirCargoALista(); } }));
+  document.getElementById('btn-guardar-cargo').addEventListener('click', guardarCargo);
+  ['cargo-cantidad-manual','cargo-precio','cargo-detalle'].forEach(i => document.getElementById(i).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); anadirCargoALista(); } }));
   document.getElementById('btn-abrir-modal-deudor').addEventListener('click', () => abrirModalDeudor(null));
   document.getElementById('btn-guardar-deudor').addEventListener('click', guardarDeudor);
   document.getElementById('btn-guardar-abono').addEventListener('click', guardarAbono);
