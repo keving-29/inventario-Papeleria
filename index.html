@@ -632,9 +632,17 @@
       <input type="number" id="anticipo-monto" placeholder="Monto total *">
       <input type="number" id="anticipo-inicial" placeholder="¿Cuánto paga ahora? (opcional)">
       <p style="font-size:11px;color:var(--texto2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Método de pago</p>
-      <div style="display:flex;gap:20px;margin-bottom:14px">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="anticipo-metodo" value="efectivo" checked=""> 💵 Efectivo</label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="anticipo-metodo" value="transferencia"> 🏦 Transferencia</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="anticipo-metodo" value="mixto"> 🔀 Pago mixto</label>
+      </div>
+      <div id="anticipo-mixto-box" class="hidden" style="background:var(--fondo);border:1px solid var(--borde);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+        <label style="font-size:11px;color:var(--texto2)">Efectivo</label>
+        <input type="number" id="anticipo-mixto-efectivo" min="0" value="0">
+        <label style="font-size:11px;color:var(--texto2)">Transferencia</label>
+        <input type="number" id="anticipo-mixto-transferencia" min="0" value="0">
+        <p id="anticipo-mixto-info" style="font-size:12px;font-weight:500"></p>
       </div>
       <input type="text" id="anticipo-nota" placeholder="Comentario opcional">
       <label style="display:block;font-size:11px;color:var(--texto2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Fecha límite de pago</label>
@@ -677,9 +685,17 @@
       <p id="abono-proveedor-saldo" style="font-size:13px;color:var(--texto2);margin-bottom:10px"></p>
       <input type="number" id="abono-proveedor-monto" placeholder="Monto que abonas *">
       <p style="font-size:11px;color:var(--texto2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Método de pago</p>
-      <div style="display:flex;gap:20px;margin-bottom:14px">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="abono-proveedor-metodo" value="efectivo" checked=""> 💵 Efectivo</label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="abono-proveedor-metodo" value="transferencia"> 🏦 Transferencia</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="abono-proveedor-metodo" value="mixto"> 🔀 Pago mixto</label>
+      </div>
+      <div id="abonoprov-mixto-box" class="hidden" style="background:var(--fondo);border:1px solid var(--borde);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+        <label style="font-size:11px;color:var(--texto2)">Efectivo</label>
+        <input type="number" id="abonoprov-mixto-efectivo" min="0" value="0">
+        <label style="font-size:11px;color:var(--texto2)">Transferencia</label>
+        <input type="number" id="abonoprov-mixto-transferencia" min="0" value="0">
+        <p id="abonoprov-mixto-info" style="font-size:12px;font-weight:500"></p>
       </div>
       <button class="btn-primary" id="btn-guardar-abono-proveedor" style="width:100%">Registrar pago</button>
     </div>
@@ -720,10 +736,12 @@
       </div>
       <label style="font-size:11px;color:var(--texto2)">Costo unitario (opcional, para calcular tu ganancia)</label>
       <input type="number" id="cargo-costo" min="0" placeholder="Ej: 50">
-      <div style="display:flex;justify-content:space-between;font-weight:600;margin:4px 0 12px"><span>Total</span><span id="cargo-total">$0</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:600;margin:4px 0 10px"><span>Total de este producto</span><span id="cargo-total">$0</span></div>
+      <button type="button" class="btn-secundario" id="btn-cargo-anadir" style="width:100%;margin-bottom:10px"><i class="ti ti-plus"></i> Añadir a la lista y seguir con otro</button>
+      <div id="cargo-lista"></div>
       <div style="display:flex;gap:8px">
         <button class="btn-cerrar-modal" data-modal="modal-cargo" style="flex:1">Cancelar</button>
-        <button class="btn-primary" id="btn-guardar-cargo" style="flex:1">Agregar</button>
+        <button class="btn-primary" id="btn-guardar-cargo" style="flex:1">Guardar en la cuenta</button>
       </div>
     </div>
   </div>
@@ -738,9 +756,17 @@
       <p id="abono-saldo" style="font-size:13px;color:var(--texto2);margin-bottom:10px"></p>
       <input type="number" id="abono-monto" placeholder="Monto del abono *">
       <p style="font-size:11px;color:var(--texto2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Método de pago</p>
-      <div style="display:flex;gap:20px;margin-bottom:14px">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="abono-metodo" value="efectivo" checked=""> 💵 Efectivo</label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="abono-metodo" value="transferencia"> 🏦 Transferencia</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="abono-metodo" value="mixto"> 🔀 Pago mixto</label>
+      </div>
+      <div id="abono-mixto-box" class="hidden" style="background:var(--fondo);border:1px solid var(--borde);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+        <label style="font-size:11px;color:var(--texto2)">Efectivo</label>
+        <input type="number" id="abono-mixto-efectivo" min="0" value="0">
+        <label style="font-size:11px;color:var(--texto2)">Transferencia</label>
+        <input type="number" id="abono-mixto-transferencia" min="0" value="0">
+        <p id="abono-mixto-info" style="font-size:12px;font-weight:500"></p>
       </div>
       <button class="btn-primary" id="btn-guardar-abono" style="width:100%">Registrar abono</button>
     </div>

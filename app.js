@@ -17,7 +17,7 @@ let DB = {
   gastos:    [],
   costos:    [],
   traslados: [],
-  config:    { stockMin: 5, trasladoContador: 0 }
+  config:    { stockMin: 5, trasladoContador: 0, ventaContador: 0, deudaContador: 0 }
 };
 
 let sesion              = null;
@@ -35,11 +35,15 @@ let resultadosVenta     = [];
 let resultadosVentaTodos = [];
 let ventaResultadosMostrar = 8;
 let indiceVenta         = 0;
-let resultadosTraslado  = [];
+let resultadosTraslado = [];
+let resultadosTrasladoTodos = [];
+let resultadosTrasladoMostrar = 8;
 let indiceTraslado      = 0;
 let cotizacion            = [];
 let cotizacionProductoActual = null;
 let resultadosCotizacion = [];
+let resultadosCotizacionTodos = [];
+let resultadosCotizacionMostrar = 8;
 let indiceCotizacion     = 0;
 let editandoDeudorId    = null;
 let deudorAbonoActual   = null;
@@ -67,6 +71,8 @@ let clienteCotizacion = null;
 let cotizacionMayor = [];
 let cotizacionMayorProductoActual = null;
 let resultadosCotizacionMayor = [];
+let resultadosCotizacionMayorTodos = [];
+let resultadosCotizacionMayorMostrar = 8;
 let indiceCotizacionMayor = 0;
 let clienteCotizacionMayor = null;
 let clienteDeudor = null;
@@ -175,7 +181,8 @@ async function sincronizar(ventasDias) {
       pagoRecibido: (f[17]!==undefined&&f[17]!=='') ? Number(f[17]) : undefined,
       cambio: (f[18]!==undefined&&f[18]!=='') ? Number(f[18]) : undefined,
       pagoEf: (f[19]!==undefined&&f[19]!=='') ? Number(f[19]) : undefined,
-      pagoTr: (f[20]!==undefined&&f[20]!=='') ? Number(f[20]) : undefined
+      pagoTr: (f[20]!==undefined&&f[20]!=='') ? Number(f[20]) : undefined,
+      numero: String(f[21]||'')
     }));
   }
 
@@ -200,7 +207,7 @@ async function sincronizar(ventasDias) {
           cedula: String(f[3]||''), telefono: String(f[4]||''), direccion: String(f[5]||''),
           productos: parsearJSON(f[6]), monto: Number(f[7])||0,
           nota: String(f[8]||''), fecha: isoAFechaCO(f[9]), hora: String(f[10]||''), fechaLimite: isoAFechaCO(f[11]),
-          abonos: parsearJSON(f[12]), pagada: String(f[13])==='true'
+          abonos: parsearJSON(f[12]), pagada: String(f[13])==='true', numero: String(f[14]||'')
         }))
       : [];
   }
@@ -256,10 +263,13 @@ async function sincronizar(ventasDias) {
   if (datos.Config && datos.Config.length > 1) {
     DB.config.stockMin = Number(datos.Config[1][0]) || 5;
     DB.config.trasladoContador = Number(datos.Config[1][1]) || 0;
+    DB.config.ventaContador = Number(datos.Config[1][2]) || 0;
+    DB.config.deudaContador = Number(datos.Config[1][3]) || 0;
   }
 
   guardarLocal();
   mostrarToast('Datos sincronizados ✓');
+  asignarNumerosCuentas();
 }
 
 async function inicializarSheets() {
@@ -288,8 +298,8 @@ async function inicializarSheets() {
   if (!datos.Traslados || datos.Traslados.length === 0)
     await sheetsEscribir('append', 'Traslados', ['ID','Numero','Fecha','Hora','Items']);
   if (!datos.Config || datos.Config.length === 0) {
-    await sheetsEscribir('append', 'Config', ['StockMin','TrasladoContador']);
-    await sheetsEscribir('append', 'Config', [5, 0]);
+    await sheetsEscribir('append', 'Config', ['StockMin','TrasladoContador','VentaContador','DeudaContador']);
+    await sheetsEscribir('append', 'Config', [5, 0, 0, 0]);
   }
   await sincronizar(VENTAS_DIAS_SYNC_LIGERO);
 }
@@ -327,9 +337,11 @@ const TASA_IVA = 0.19;
 // Anticipos) para que escribir o escanear cualquiera de los tres siempre
 // encuentre el producto.
 function productoCoincideTexto(p, q) {
-  return p.nombre.toLowerCase().includes(q)
-    || p.ref.toLowerCase().includes(q)
-    || (p.codigoBarras && p.codigoBarras.toLowerCase().includes(q));
+  // Cada palabra escrita debe aparecer en el nombre, la ref o el código de barras
+  // (en cualquier orden): "lapiz mongol" encuentra "MONGOL LAPIZ NEGRO", etc.
+  const texto = (p.nombre + ' ' + p.ref + ' ' + (p.codigoBarras || '')).toLowerCase();
+  const partes = String(q).toLowerCase().split(/\s+/).filter(Boolean);
+  return partes.length > 0 && partes.every(t => texto.includes(t));
 }
 
 // Coincidencia EXACTA por Ref o código de barras — esto es lo que distingue
@@ -590,11 +602,12 @@ function buscarProductoTraslado() {
   const q = document.getElementById('traslado-search').value.toLowerCase();
   const cont = document.getElementById('traslado-resultados');
   indiceTraslado = 0;
-  if (!q) { cont.innerHTML=''; resultadosTraslado=[]; return; }
+  resultadosTrasladoMostrar = 8;
+  if (!q) { cont.innerHTML=''; resultadosTraslado=[]; resultadosTrasladoTodos=[]; return; }
 
-  resultadosTraslado = DB.productos
-    .filter(p => productoCoincideTexto(p, q))
-    .slice(0,8);
+  resultadosTrasladoTodos = DB.productos
+    .filter(p => productoCoincideTexto(p, q));
+  resultadosTraslado = resultadosTrasladoTodos.slice(0, resultadosTrasladoMostrar);
 
   if (resultadosTraslado.length===0) { cont.innerHTML='<p style="font-size:13px;color:var(--texto2);padding:8px 0">Sin resultados</p>'; return; }
 
@@ -603,6 +616,7 @@ function buscarProductoTraslado() {
 
 function renderResultadosTraslado() {
   const cont = document.getElementById('traslado-resultados');
+  const quedan = resultadosTrasladoTodos.length - resultadosTraslado.length;
   cont.innerHTML = `
     <div style="background:var(--card);border:0.5px solid var(--borde);border-radius:12px;overflow:hidden;margin-bottom:1rem;box-shadow:var(--sombra)">
       <div style="padding:8px 12px;background:var(--blush-claro);border-bottom:0.5px solid var(--borde);font-size:11px;color:var(--texto2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px">
@@ -617,7 +631,11 @@ function renderResultadosTraslado() {
           </div>
           <button class="btn-primary btn-agregar-traslado" data-id="${p.id}" style="flex-shrink:0"><i class="ti ti-plus"></i> Agregar</button>
         </div>`).join('')}
+      ${quedan>0?`<button type="button" class="btn-secundario" id="btn-ver-mas-traslado" style="width:100%;border-radius:0">Ver más resultados (${quedan} restantes)</button>`:''}
     </div>`;
+
+  const vm = document.getElementById('btn-ver-mas-traslado');
+  if (vm) vm.addEventListener('click', () => { resultadosTrasladoMostrar += 8; resultadosTraslado = resultadosTrasladoTodos.slice(0, resultadosTrasladoMostrar); renderResultadosTraslado(); });
 
   cont.querySelectorAll('.btn-agregar-traslado').forEach(b =>
     b.addEventListener('click', () => agregarATraslado(b.dataset.id)));
@@ -694,7 +712,39 @@ function renderTraslado() {
 // a mitad de camino podía encontrar el sheet sin valores y devolver el
 // contador en 0, reiniciando la numeración de traslados).
 async function guardarConfigSheet() {
-  await sheetsEscribir('update','Config',[DB.config.stockMin, DB.config.trasladoContador], 2);
+  await sheetsEscribir('update','Config',[DB.config.stockMin, DB.config.trasladoContador, DB.config.ventaContador||0, DB.config.deudaContador||0], 2);
+}
+
+// Numeración: ventas (V-0001...) y cuentas de deudores (D-0001...) llevan contadores aparte.
+async function siguienteNumeroVenta() {
+  DB.config.ventaContador = (DB.config.ventaContador||0) + 1;
+  guardarLocal();
+  await guardarConfigSheet();
+  return 'V-' + String(DB.config.ventaContador).padStart(4,'0');
+}
+async function siguienteNumeroDeuda() {
+  DB.config.deudaContador = (DB.config.deudaContador||0) + 1;
+  guardarLocal();
+  await guardarConfigSheet();
+  return 'D-' + String(DB.config.deudaContador).padStart(4,'0');
+}
+// Las cuentas que ya existían sin número se numeran una sola vez, de la más vieja a la más nueva.
+let asignandoNumerosCuentas = false;
+async function asignarNumerosCuentas() {
+  if (asignandoNumerosCuentas) return;
+  const pend = DB.deudores.filter(d => !d.numero);
+  if (!pend.length) return;
+  asignandoNumerosCuentas = true;
+  try {
+    pend.sort((x, y) => (parseFechaCO(x.fecha).getTime() + horaAMinutos(x.hora) * 60000) - (parseFechaCO(y.fecha).getTime() + horaAMinutos(y.hora) * 60000));
+    for (const d of pend) {
+      d.numero = await siguienteNumeroDeuda();
+      const ok = await guardarDeudorEnSheet(d, false);
+      if (!ok) { d.numero = ''; break; }
+    }
+    guardarLocal();
+    if (typeof renderDeudores === 'function') renderDeudores();
+  } finally { asignandoNumerosCuentas = false; }
 }
 
 async function siguienteNumeroTraslado() {
@@ -703,6 +753,30 @@ async function siguienteNumeroTraslado() {
   await guardarConfigSheet();
   return 'TD-N-' + String(DB.config.trasladoContador).padStart(4,'0');
 }
+
+// =============================================
+// DOCUMENTOS IMPRESOS (hoja normal) — mismo diseño para todos
+// =============================================
+// Estilo del diseño: 'a' = Clásico elegante, 'b' = Moderno con franja de color, 'c' = Minimalista.
+const ESTILO_DOCUMENTO = 'a';
+
+function pkDoc(o) {
+  const datos = (o.datos || []).filter(x => x[1]).map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join('');
+  return `<div class="pk-doc est-${ESTILO_DOCUMENTO}">
+    <header class="pk-cab">
+      <div class="pk-marca"><div class="pk-nombre">Papelería Karen</div><div class="pk-sub">${esc(o.subtitulo || '')}</div></div>
+      <div class="pk-num"><span>${esc(o.tipo)}</span>${o.numero ? `<b>N° ${esc(o.numero)}</b>` : ''}<small>${esc(o.fecha)} · ${esc(o.hora)}</small></div>
+    </header>
+    ${datos ? `<section class="pk-datos">${datos}</section>` : ''}
+    ${o.cuerpo || ''}
+    ${o.totales ? `<section class="pk-totales">${o.totales}</section>` : ''}
+    ${o.extra || ''}
+    ${o.sello ? `<div class="pk-sello">${esc(o.sello)}</div>` : ''}
+    ${o.firmas ? `<div class="pk-firmas"><div>Firma del cliente</div><div>Papelería Karen</div></div>` : ''}
+    <footer class="pk-pie">${o.pie || 'Gracias por su compra'}</footer>
+  </div>`;
+}
+const pkFila = (k, v, cls) => `<div${cls ? ` class="${cls}"` : ''}><span>${k}</span><b>${v}</b></div>`;
 
 function prepararImpresion(idContenedor) {
   document.getElementById('traslado-print').classList.remove('activo');
@@ -809,11 +883,12 @@ function buscarProductoCotizacion() {
   const q = document.getElementById('cotizacion-search').value.toLowerCase();
   const cont = document.getElementById('cotizacion-resultados');
   indiceCotizacion = 0;
-  if (!q) { cont.innerHTML=''; resultadosCotizacion=[]; return; }
+  resultadosCotizacionMostrar = 8;
+  if (!q) { cont.innerHTML=''; resultadosCotizacion=[]; resultadosCotizacionTodos=[]; return; }
 
-  resultadosCotizacion = DB.productos
-    .filter(p => productoCoincideTexto(p, q))
-    .slice(0,8);
+  resultadosCotizacionTodos = DB.productos
+    .filter(p => productoCoincideTexto(p, q));
+  resultadosCotizacion = resultadosCotizacionTodos.slice(0, resultadosCotizacionMostrar);
 
   if (resultadosCotizacion.length===0) { cont.innerHTML='<p style="font-size:13px;color:var(--texto2);padding:8px 0">Sin resultados</p>'; return; }
 
@@ -822,6 +897,7 @@ function buscarProductoCotizacion() {
 
 function renderResultadosCotizacion() {
   const cont = document.getElementById('cotizacion-resultados');
+  const quedan = resultadosCotizacionTodos.length - resultadosCotizacion.length;
   cont.innerHTML = `
     <div style="background:var(--card);border:0.5px solid var(--borde);border-radius:12px;overflow:hidden;margin-bottom:1rem;box-shadow:var(--sombra)">
       <div style="padding:8px 12px;background:var(--blush-claro);border-bottom:0.5px solid var(--borde);font-size:11px;color:var(--texto2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px">
@@ -836,7 +912,11 @@ function renderResultadosCotizacion() {
           </div>
           <button class="btn-primary btn-agregar-cotizacion" data-id="${p.id}" style="flex-shrink:0"><i class="ti ti-plus"></i> Agregar</button>
         </div>`).join('')}
+      ${quedan>0?`<button type="button" class="btn-secundario" id="btn-ver-mas-cotizacion" style="width:100%;border-radius:0">Ver más resultados (${quedan} restantes)</button>`:''}
     </div>`;
+
+  const vm = document.getElementById('btn-ver-mas-cotizacion');
+  if (vm) vm.addEventListener('click', () => { resultadosCotizacionMostrar += 8; resultadosCotizacion = resultadosCotizacionTodos.slice(0, resultadosCotizacionMostrar); renderResultadosCotizacion(); });
 
   cont.querySelectorAll('.btn-agregar-cotizacion').forEach(b =>
     b.addEventListener('click', () => agregarACotizacion(b.dataset.id)));
@@ -974,11 +1054,12 @@ function buscarProductoCotizacionMayor() {
   const q = document.getElementById('cotmayor-search').value.toLowerCase();
   const cont = document.getElementById('cotmayor-resultados');
   indiceCotizacionMayor = 0;
-  if (!q) { cont.innerHTML=''; resultadosCotizacionMayor=[]; return; }
+  resultadosCotizacionMayorMostrar = 8;
+  if (!q) { cont.innerHTML=''; resultadosCotizacionMayor=[]; resultadosCotizacionMayorTodos=[]; return; }
 
-  resultadosCotizacionMayor = DB.productos
-    .filter(p => productoCoincideTexto(p, q))
-    .slice(0,8);
+  resultadosCotizacionMayorTodos = DB.productos
+    .filter(p => productoCoincideTexto(p, q));
+  resultadosCotizacionMayor = resultadosCotizacionMayorTodos.slice(0, resultadosCotizacionMayorMostrar);
 
   if (resultadosCotizacionMayor.length===0) { cont.innerHTML='<p style="font-size:13px;color:var(--texto2);padding:8px 0">Sin resultados</p>'; return; }
 
@@ -987,6 +1068,7 @@ function buscarProductoCotizacionMayor() {
 
 function renderResultadosCotizacionMayor() {
   const cont = document.getElementById('cotmayor-resultados');
+  const quedan = resultadosCotizacionMayorTodos.length - resultadosCotizacionMayor.length;
   cont.innerHTML = `
     <div style="background:var(--card);border:0.5px solid var(--borde);border-radius:12px;overflow:hidden;margin-bottom:1rem;box-shadow:var(--sombra)">
       <div style="padding:8px 12px;background:var(--blush-claro);border-bottom:0.5px solid var(--borde);font-size:11px;color:var(--texto2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px">
@@ -1001,7 +1083,11 @@ function renderResultadosCotizacionMayor() {
           </div>
           <button class="btn-primary btn-agregar-cotmayor" data-id="${p.id}" style="flex-shrink:0"><i class="ti ti-plus"></i> Agregar</button>
         </div>`).join('')}
+      ${quedan>0?`<button type="button" class="btn-secundario" id="btn-ver-mas-cotmayor" style="width:100%;border-radius:0">Ver más resultados (${quedan} restantes)</button>`:''}
     </div>`;
+
+  const vm = document.getElementById('btn-ver-mas-cotmayor');
+  if (vm) vm.addEventListener('click', () => { resultadosCotizacionMayorMostrar += 8; resultadosCotizacionMayor = resultadosCotizacionMayorTodos.slice(0, resultadosCotizacionMayorMostrar); renderResultadosCotizacionMayor(); });
 
   cont.querySelectorAll('.btn-agregar-cotmayor').forEach(b =>
     b.addEventListener('click', () => agregarACotizacionMayor(b.dataset.id)));
@@ -1172,7 +1258,7 @@ function quitarClienteCotizacionMayor() {
 // BUSCADOR DE PRODUCTO (widget reutilizable: deudores / anticipos)
 // =============================================
 function inicializarBuscadorProducto(key, inputId, resultadosId, onSeleccionar) {
-  buscadoresProducto[key] = { resultados: [], indice: 0 };
+  buscadoresProducto[key] = { resultados: [], todos: [], mostrar: 8, indice: 0 };
   const input = document.getElementById(inputId);
   const cont = document.getElementById(resultadosId);
 
@@ -1192,9 +1278,12 @@ function inicializarBuscadorProducto(key, inputId, resultadosId, onSeleccionar) 
             </div>
             <button type="button" class="btn-primary btn-elegir-producto-buscado" data-idx="${i}" style="flex-shrink:0"><i class="ti ti-plus"></i> Elegir</button>
           </div>`).join('')}
+        ${estado.todos.length>estado.resultados.length?`<button type="button" class="btn-secundario btn-ver-mas-prod" style="width:100%;border-radius:0">Ver más resultados (${estado.todos.length-estado.resultados.length} restantes)</button>`:''}
       </div>`;
     cont.querySelectorAll('.btn-elegir-producto-buscado').forEach(b =>
       b.addEventListener('click', () => elegir(parseInt(b.dataset.idx))));
+    const vm = cont.querySelector('.btn-ver-mas-prod');
+    if (vm) vm.addEventListener('click', () => { estado.mostrar += 8; estado.resultados = estado.todos.slice(0, estado.mostrar); renderizar(); });
   }
 
   function elegir(i) {
@@ -1210,8 +1299,10 @@ function inicializarBuscadorProducto(key, inputId, resultadosId, onSeleccionar) 
     const q = input.value.toLowerCase();
     const estado = buscadoresProducto[key];
     estado.indice = 0;
-    if (!q) { cont.innerHTML=''; estado.resultados=[]; return; }
-    estado.resultados = DB.productos.filter(p => productoCoincideTexto(p, q)).slice(0,8);
+    estado.mostrar = 8;
+    if (!q) { cont.innerHTML=''; estado.resultados=[]; estado.todos=[]; return; }
+    estado.todos = DB.productos.filter(p => productoCoincideTexto(p, q));
+    estado.resultados = estado.todos.slice(0, estado.mostrar);
     if (estado.resultados.length===0) { cont.innerHTML = '<p style="font-size:13px;color:var(--texto2);padding:8px 0">Sin resultados</p>'; return; }
     renderizar();
   });
@@ -1229,7 +1320,7 @@ function inicializarBuscadorProducto(key, inputId, resultadosId, onSeleccionar) 
 // BUSCADOR DE CLIENTE (widget reutilizable: ventas / deudores / anticipos)
 // =============================================
 function inicializarBuscadorCliente(key, inputId, resultadosId, onSeleccionar) {
-  buscadoresCliente[key] = { resultados: [], indice: 0 };
+  buscadoresCliente[key] = { resultados: [], todos: [], mostrar: 8, indice: 0 };
   const input = document.getElementById(inputId);
   const cont = document.getElementById(resultadosId);
 
@@ -1249,9 +1340,12 @@ function inicializarBuscadorCliente(key, inputId, resultadosId, onSeleccionar) {
             </div>
             <button type="button" class="btn-primary btn-elegir-cliente-buscado" data-idx="${i}" style="flex-shrink:0"><i class="ti ti-plus"></i> Elegir</button>
           </div>`).join('')}
+        ${estado.todos.length>estado.resultados.length?`<button type="button" class="btn-secundario btn-ver-mas-cli" style="width:100%;border-radius:0">Ver más resultados (${estado.todos.length-estado.resultados.length} restantes)</button>`:''}
       </div>`;
     cont.querySelectorAll('.btn-elegir-cliente-buscado').forEach(b =>
       b.addEventListener('click', () => elegir(parseInt(b.dataset.idx))));
+    const vm = cont.querySelector('.btn-ver-mas-cli');
+    if (vm) vm.addEventListener('click', () => { estado.mostrar += 8; estado.resultados = estado.todos.slice(0, estado.mostrar); renderizar(); });
   }
 
   function elegir(i) {
@@ -1267,8 +1361,10 @@ function inicializarBuscadorCliente(key, inputId, resultadosId, onSeleccionar) {
     const q = input.value.toLowerCase();
     const estado = buscadoresCliente[key];
     estado.indice = 0;
-    if (!q) { cont.innerHTML=''; estado.resultados=[]; return; }
-    estado.resultados = DB.clientes.filter(c => c.nombre.toLowerCase().includes(q) || c.cedula.toLowerCase().includes(q)).slice(0,8);
+    estado.mostrar = 8;
+    if (!q) { cont.innerHTML=''; estado.resultados=[]; estado.todos=[]; return; }
+    estado.todos = DB.clientes.filter(c => c.nombre.toLowerCase().includes(q) || c.cedula.toLowerCase().includes(q));
+    estado.resultados = estado.todos.slice(0, estado.mostrar);
     if (estado.resultados.length===0) { cont.innerHTML = '<p style="font-size:13px;color:var(--texto2);padding:8px 0">Sin resultados. Usa "Nuevo cliente" para agregarlo.</p>'; return; }
     renderizar();
   });
@@ -1462,12 +1558,59 @@ function deudaVencida(d) {
   return parseFechaCO(d.fechaLimite) < hoy;
 }
 
+// ---- Pago combinado (efectivo + transferencia) para abonos y pagos ----
+function mixtoInit(p, radioName, montoId) {
+  const radios = document.querySelectorAll(`input[name="${radioName}"]`);
+  const box = document.getElementById(p + '-mixto-box');
+  const ef = document.getElementById(p + '-mixto-efectivo');
+  const tr = document.getElementById(p + '-mixto-transferencia');
+  const info = document.getElementById(p + '-mixto-info');
+  const montoEl = document.getElementById(montoId);
+  const esMixto = () => { const r = document.querySelector(`input[name="${radioName}"]:checked`); return !!r && r.value === 'mixto'; };
+  const desde = origen => {
+    const monto = parseFloat(montoEl.value) || 0;
+    if (origen === 'tr') ef.value = Math.max(0, monto - (parseFloat(tr.value) || 0));
+    else tr.value = Math.max(0, monto - (parseFloat(ef.value) || 0));
+    const resto = monto - (parseFloat(ef.value) || 0) - (parseFloat(tr.value) || 0);
+    info.textContent = Math.round(resto) === 0 ? 'Cuadra con el monto ✓' : `Falta repartir ${fmt(resto)}`;
+    info.style.color = Math.round(resto) === 0 ? 'var(--malva)' : '#A32D2D';
+  };
+  const actualizar = () => { box.classList.toggle('hidden', !esMixto()); if (esMixto()) desde('monto'); };
+  radios.forEach(r => r.addEventListener('change', actualizar));
+  montoEl.addEventListener('input', () => { if (esMixto()) desde('monto'); });
+  ef.addEventListener('input', () => desde('ef'));
+  tr.addEventListener('input', () => desde('tr'));
+}
+function mixtoReset(p, radioName) {
+  const r = document.querySelector(`input[name="${radioName}"][value="efectivo"]`);
+  if (r) r.checked = true;
+  document.getElementById(p + '-mixto-box').classList.add('hidden');
+  document.getElementById(p + '-mixto-efectivo').value = 0;
+  document.getElementById(p + '-mixto-transferencia').value = 0;
+}
+function mixtoLeer(p, monto) {
+  const efectivo = parseFloat(document.getElementById(p + '-mixto-efectivo').value) || 0;
+  const transferencia = parseFloat(document.getElementById(p + '-mixto-transferencia').value) || 0;
+  if (Math.round(efectivo + transferencia) !== Math.round(monto)) { alert('El pago mixto no cuadra con el monto (' + fmt(monto) + ').'); return null; }
+  return { efectivo, transferencia };
+}
+// Texto del método de un abono/pago: Efectivo, Transferencia o Pago mixto con el detalle.
+function textoMetodoPago(x) {
+  if (x.metodoPago === 'mixto') {
+    const ef = x.efectivo != null ? x.efectivo : x.pagoEf, tr = x.transferencia != null ? x.transferencia : x.pagoTr;
+    return (ef != null && tr != null) ? `Mixto (Efectivo ${fmt(ef)} + Transferencia ${fmt(tr)})` : 'Pago mixto';
+  }
+  return x.metodoPago === 'transferencia' ? 'Transferencia' : 'Efectivo';
+}
+
 // Registra un pago (anticipo o abono) contra una deuda/anticipo: queda como abono
 // Y ADEMÁS entra a la caja del día como una venta más (efectivo o transferencia).
-async function registrarPagoDeuda(entidad, tipo, monto, metodoPago) {
+async function registrarPagoDeuda(entidad, tipo, monto, metodoPago, reparto) {
   const ahora = new Date();
   entidad.abonos = entidad.abonos || [];
-  entidad.abonos.push({ id: uid(), monto, metodoPago, fecha: fechaCO(ahora), hora: horaCO(ahora) });
+  const abono = { id: uid(), monto, metodoPago, fecha: fechaCO(ahora), hora: horaCO(ahora) };
+  if (metodoPago === 'mixto' && reparto) { abono.efectivo = reparto.efectivo; abono.transferencia = reparto.transferencia; }
+  entidad.abonos.push(abono);
 
   const productos = entidad.productos || [];
   let costoTotal = 0;
@@ -1495,10 +1638,13 @@ async function registrarPagoDeuda(entidad, tipo, monto, metodoPago) {
     clienteCedula: entidad.cedula||'', clienteTelefono: entidad.telefono||'',
     clienteDireccion: entidad.direccion||'',
     pagadoAhora: monto,
-    saldoPendiente: calcularSaldo(entidad)
+    saldoPendiente: calcularSaldo(entidad),
+    pagoEf: metodoPago === 'mixto' && reparto ? reparto.efectivo : undefined,
+    pagoTr: metodoPago === 'mixto' && reparto ? reparto.transferencia : undefined,
+    numero: ''
   };
   DB.ventas.push(venta);
-  const ventaGuardada = await sheetsEscribir('append','Ventas',[venta.id,venta.fecha,venta.hora,venta.total,venta.ganancia,venta.nota,venta.metodoPago,JSON.stringify(venta.items),venta.clienteId,venta.clienteNombre,venta.clienteCedula,venta.clienteTelefono,venta.clienteDireccion,venta.pagadoAhora,venta.saldoPendiente]);
+  const ventaGuardada = await sheetsEscribir('append','Ventas',[venta.id,venta.fecha,venta.hora,venta.total,venta.ganancia,venta.nota,venta.metodoPago,JSON.stringify(venta.items),venta.clienteId,venta.clienteNombre,venta.clienteCedula,venta.clienteTelefono,venta.clienteDireccion,venta.pagadoAhora,venta.saldoPendiente,'','','','',venta.pagoEf!=null?venta.pagoEf:'',venta.pagoTr!=null?venta.pagoTr:'','']);
   if (!ventaGuardada) {
     DB.ventas = DB.ventas.filter(v => v.id !== venta.id);
     entidad.abonos.pop();
@@ -1525,55 +1671,27 @@ function imprimirBoucherDeuda(d, tipo) {
   const ahora = new Date();
   const abonos = d.abonos||[];
   const saldo = calcularSaldo(d);
-  const titulo = tipo==='deudor' ? 'Comprobante de deuda' : 'Comprobante de anticipo';
+  const esDeuda = tipo==='deudor';
 
   const filasAbonos = abonos.map((a,i) => `
-    <tr>
-      <td>${i+1}</td>
-      <td>${a.fecha} ${a.hora}</td>
-      <td>${a.metodoPago==='transferencia'?'Transferencia':'Efectivo'}</td>
-      <td style="text-align:right">${fmt(a.monto)}</td>
-    </tr>`).join('');
-
+    <tr><td>${i+1}</td><td>${esc(a.fecha)} ${esc(a.hora)}</td><td>${esc(textoMetodoPago(a))}</td><td class="der">${fmt(a.monto)}</td></tr>`).join('');
   const productos = d.productos||[];
   const filasProductos = productos.map(p => `
-    <tr>
-      <td>${esc(p.ref||'-')}</td>
-      <td>${esc(p.productoNombre)}</td>
-      <td style="text-align:center">${p.cantidad}</td>
-      <td style="text-align:right">${fmt(p.precioUnit)}</td>
-    </tr>`).join('');
+    <tr><td>${esc(p.ref||'-')}</td><td>${esc(p.productoNombre)}</td><td class="cen">${p.cantidad}</td><td class="der">${fmt(p.precioUnit)}</td><td class="der">${fmt((Number(p.precioUnit)||0)*(Number(p.cantidad)||0))}</td></tr>`).join('');
 
-  document.getElementById('deudor-print-contenido').innerHTML = `
-    <div id="tp-header">
-      <h1>Papelería Karen</h1>
-      <p>${titulo}</p>
-    </div>
-    <div id="tp-meta">
-      <span><strong>Fecha:</strong> ${fechaCO(ahora)}</span>
-      <span><strong>Hora:</strong> ${horaCO(ahora)}</span>
-    </div>
-    <p style="font-size:13px;margin-bottom:4px"><strong>Cliente:</strong> ${esc(d.nombre)}</p>
-    <p style="font-size:13px;margin-bottom:4px"><strong>Cédula:</strong> ${esc(d.cedula)}</p>
-    ${d.telefono?`<p style="font-size:13px;margin-bottom:4px"><strong>Teléfono:</strong> ${esc(d.telefono)}</p>`:''}
-    ${d.direccion?`<p style="font-size:13px;margin-bottom:4px"><strong>Dirección:</strong> ${esc(d.direccion)}</p>`:''}
-    ${productos.length?`
-      <table style="margin-top:8px;margin-bottom:8px">
-        <thead><tr><th>Código</th><th>Producto</th><th>Cant.</th><th>Precio</th></tr></thead>
-        <tbody>${filasProductos}</tbody>
-      </table>`:''}
-    ${d.nota?`<p style="font-size:13px;margin-bottom:4px"><strong>Comentario:</strong> ${esc(d.nota)}</p>`:''}
-    ${d.fechaLimite?`<p style="font-size:13px;margin-bottom:12px"><strong>Fecha límite de pago:</strong> ${d.fechaLimite}</p>`:''}
-    <p style="margin-top:8px;font-size:14px"><strong>Monto total: ${fmt(d.monto)}</strong></p>
-    ${abonos.length?`
-      <p style="margin-top:12px;font-size:13px"><strong>${tipo==='deudor'?'Abonos realizados':'Anticipos realizados'}:</strong></p>
-      <table>
-        <thead><tr><th>#</th><th>Fecha</th><th>Método</th><th>Monto</th></tr></thead>
-        <tbody>${filasAbonos}</tbody>
-      </table>`:''}
-    <p style="margin-top:12px;font-size:16px"><strong>Saldo pendiente: ${fmt(saldo)}</strong></p>
-    ${saldo<=0?`<p style="text-align:center;margin-top:8px;font-size:13px">${tipo==='deudor'?'DEUDA CANCELADA EN SU TOTALIDAD':'ANTICIPO CANCELADO — PRODUCTO ENTREGADO'}</p>`:''}
-  `;
+  document.getElementById('deudor-print-contenido').innerHTML = pkDoc({
+    tipo: esDeuda ? 'Comprobante de deuda' : 'Comprobante de anticipo',
+    numero: d.numero || '',
+    fecha: fechaCO(ahora), hora: horaCO(ahora),
+    datos: [['Cliente', d.nombre], ['Cédula', d.cedula], ['Teléfono', d.telefono], ['Dirección', d.direccion], ['Comentario', d.nota], ['Fecha límite', d.fechaLimite]],
+    cuerpo: productos.length ? `<table class="pk-tabla"><thead><tr><th>Código</th><th>Producto</th><th class="cen">Cant.</th><th class="der">Precio</th><th class="der">Total</th></tr></thead><tbody>${filasProductos}</tbody></table>` : '',
+    extra: abonos.length ? `<div class="pk-subtit">${esDeuda?'Abonos realizados':'Anticipos realizados'}</div>
+      <table class="pk-tabla"><thead><tr><th>#</th><th>Fecha</th><th>Método</th><th class="der">Monto</th></tr></thead><tbody>${filasAbonos}</tbody></table>` : '',
+    totales: pkFila('Monto total', fmt(d.monto)) + pkFila('Abonado', fmt(calcularAbonado(d))) + pkFila('Saldo pendiente', fmt(saldo), 'gran'),
+    sello: saldo<=0 ? (esDeuda ? 'DEUDA CANCELADA EN SU TOTALIDAD' : 'ANTICIPO CANCELADO — PRODUCTO ENTREGADO') : '',
+    firmas: true,
+    pie: 'Gracias por su confianza'
+  });
 
   prepararImpresion('deudor-print');
   window.print();
@@ -1589,7 +1707,7 @@ function abrirModalAbono(id, tipo) {
   document.getElementById('abono-nombre').textContent = d.nombre;
   document.getElementById('abono-saldo').textContent = `Saldo pendiente: ${fmt(calcularSaldo(d))}`;
   document.getElementById('abono-monto').value = '';
-  document.querySelector('input[name="abono-metodo"][value="efectivo"]').checked = true;
+  mixtoReset('abono', 'abono-metodo');
   abrirModal('modal-abono');
   setTimeout(() => document.getElementById('abono-monto').focus(), 100);
 }
@@ -1607,6 +1725,8 @@ async function guardarAbono() {
   const metodoSeleccionado = document.querySelector('input[name="abono-metodo"]:checked');
   if (!metodoSeleccionado) { alert('Selecciona el método de pago'); return; }
   const metodoPago = metodoSeleccionado.value;
+  let reparto = null;
+  if (metodoPago === 'mixto') { reparto = mixtoLeer('abono', monto); if (!reparto) return; }
 
   const abonosAnteriores = Array.isArray(d.abonos) ? d.abonos.map(a => ({...a})) : [];
   const pagadaAnterior = !!d.pagada;
@@ -1616,7 +1736,7 @@ async function guardarAbono() {
   if (btnAbono) { btnAbono.disabled = true; btnAbono.textContent = 'Guardando...'; }
 
   try {
-    ventaAbono = await registrarPagoDeuda(d, tipoAbonoActual, monto, metodoPago);
+    ventaAbono = await registrarPagoDeuda(d, tipoAbonoActual, monto, metodoPago, reparto);
 
     const guardadoEntidad = tipoAbonoActual==='deudor'
       ? await guardarDeudorEnSheet(d, false)
@@ -1655,7 +1775,7 @@ async function guardarAbono() {
 // DEUDORES — cuenta abierta por cliente
 // =============================================
 async function guardarDeudorEnSheet(d, esNuevo) {
-  const fila = [d.id,d.clienteId,d.nombre,d.cedula,d.telefono,d.direccion,JSON.stringify(d.productos||[]),d.monto,d.nota,d.fecha,d.hora,d.fechaLimite,JSON.stringify(d.abonos),d.pagada];
+  const fila = [d.id,d.clienteId,d.nombre,d.cedula,d.telefono,d.direccion,JSON.stringify(d.productos||[]),d.monto,d.nota,d.fecha,d.hora,d.fechaLimite,JSON.stringify(d.abonos),d.pagada,d.numero||''];
   if (esNuevo) return await sheetsEscribir('append','Deudores',fila);
   return await sheetsEscribir('update','Deudores',fila,d.id);
 }
@@ -1695,7 +1815,7 @@ function cargosDeCuenta(d) {
 
 function movimientosDeCuenta(d) {
   const mov = cargosDeCuenta(d).map(c => Object.assign({ tipo: 'cargo' }, c));
-  (d.abonos || []).forEach(a => mov.push({ tipo: 'abono', fecha: a.fecha, hora: a.hora, detalle: 'Abono en ' + (a.metodoPago === 'transferencia' ? 'transferencia' : 'efectivo'), cant: 0, valor: Number(a.monto) || 0 }));
+  (d.abonos || []).forEach(a => mov.push({ tipo: 'abono', fecha: a.fecha, hora: a.hora, detalle: 'Abono · ' + textoMetodoPago(a), metodo: a.metodoPago, cant: 0, valor: Number(a.monto) || 0 }));
   mov.forEach((m, i) => { m._o = i; m._t = parseFechaCO(m.fecha).getTime() + horaAMinutos(m.hora) * 60000; });
   mov.sort((a, b) => (a._t - b._t) || (a._o - b._o));
   return mov;
@@ -1751,7 +1871,7 @@ async function guardarDeudor() {
     id: uid(), clienteId: clienteDeudor.id, nombre: clienteDeudor.nombre, cedula: clienteDeudor.cedula,
     telefono: clienteDeudor.telefono || '', direccion: clienteDeudor.direccion || '',
     productos: [], monto: 0, nota, fecha: fechaCO(ahora), hora: horaCO(ahora), fechaLimite,
-    abonos: [], pagada: false
+    abonos: [], pagada: false, numero: await siguienteNumeroDeuda()
   };
   DB.deudores.push(nuevo);
   const ok = await guardarDeudorEnSheet(nuevo, true);
@@ -1795,7 +1915,7 @@ function renderDeudores() {
     const saldo = calcularSaldo(d);
     const u = ultimoMovimientoCuenta(d);
     return `<tr>
-      <td>${esc(d.nombre)}${d.nota ? `<div style="font-size:12px;color:var(--rosa-oscuro);font-weight:500">${esc(d.nota)}</div>` : ''}<div style="font-size:11px;color:var(--texto2)">CC ${esc(d.cedula)}</div></td>
+      <td>${esc(d.nombre)}${d.nota ? `<div style="font-size:12px;color:var(--rosa-oscuro);font-weight:500">${esc(d.nota)}</div>` : ''}<div style="font-size:11px;color:var(--texto2)">CC ${esc(d.cedula)}${d.numero ? ' · N° ' + esc(d.numero) : ''}</div></td>
       <td>${fmt(d.monto)}</td>
       <td>${fmt(calcularAbonado(d))}</td>
       <td style="font-weight:600">${fmt(saldo)}</td>
@@ -1838,14 +1958,14 @@ function renderCuenta() {
   const mov = movimientosDeCuenta(d);
 
   const filas = mov.map(m => m.tipo === 'abono' ? `
-      <div class="cta-fila abono"><span>${esc(m.fecha)}</span><span class="cta-hora">${esc(m.hora)}</span><b>💵 ${esc(m.detalle)}</b><span></span><span class="cta-val">− ${fmt(m.valor)}</span><span></span></div>` : `
+      <div class="cta-fila abono"><span>${esc(m.fecha)}</span><span class="cta-hora">${esc(m.hora)}</span><b>${m.metodo === 'mixto' ? '🔀' : m.metodo === 'transferencia' ? '🏦' : '💵'} ${esc(m.detalle)}</b><span></span><span class="cta-val">− ${fmt(m.valor)}</span><span></span></div>` : `
       <div class="cta-fila"><span>${esc(m.fecha)}</span><span class="cta-hora">${esc(m.hora)}</span><b>${esc(m.detalle)}</b><span class="cta-der">${m.cant || ''}</span><span class="cta-der">${fmt(m.valor)}</span>
         <span>${m.real ? `<button class="btn-peligro btn-quitar-cargo" data-idx="${m.idx}" style="padding:3px 7px" title="Quitar de la cuenta"><i class="ti ti-x"></i></button>` : ''}</span></div>`).join('');
 
   cont.innerHTML = `
     <div class="cta-cab">
       <div>
-        <div class="cta-et">Cuenta abierta ${badgeCuenta(d)}</div>
+        <div class="cta-et">Cuenta abierta ${d.numero ? '<b>N° ' + esc(d.numero) + '</b>' : ''} ${badgeCuenta(d)}</div>
         <div class="cta-nombre">${esc(d.nombre)}</div>
         <div class="cta-sub">CC ${esc(d.cedula)}${d.telefono ? ' · ' + esc(d.telefono) : ''}${d.nota ? ' · ' + esc(d.nota) : ''}${d.fechaLimite ? ' · Fecha límite ' + esc(d.fechaLimite) : ''}</div>
       </div>
@@ -1871,14 +1991,22 @@ function renderCuenta() {
   cont.querySelectorAll('.btn-quitar-cargo').forEach(b => b.addEventListener('click', () => quitarCargo(d, parseInt(b.dataset.idx))));
 }
 
-// ---------- Agregar a la cuenta ----------
-function abrirModalCargo() {
+// ---------- Agregar a la cuenta (varios productos de una vez) ----------
+let cargoLista = [];
+
+function limpiarFormularioCargo() {
   cargoProductoSel = null;
   ['cargo-buscar','cargo-detalle','cargo-precio','cargo-costo'].forEach(x => document.getElementById(x).value = '');
   document.getElementById('cargo-cantidad').value = 1;
   document.getElementById('cargo-resultados').innerHTML = '';
   document.getElementById('cargo-producto-chip').classList.add('hidden');
   actualizarTotalCargo();
+}
+
+function abrirModalCargo() {
+  cargoLista = [];
+  limpiarFormularioCargo();
+  renderListaCargo();
   abrirModal('modal-cargo');
   setTimeout(() => document.getElementById('cargo-buscar').focus(), 100);
 }
@@ -1893,6 +2021,7 @@ function seleccionarProductoCargo(p) {
   document.getElementById('cargo-costo').value = p.pcompra;
   actualizarTotalCargo();
   document.getElementById('cargo-cantidad').focus();
+  document.getElementById('cargo-cantidad').select();
 }
 
 function actualizarTotalCargo() {
@@ -1900,50 +2029,91 @@ function actualizarTotalCargo() {
   document.getElementById('cargo-total').textContent = fmt(t);
 }
 
-async function guardarCargo() {
-  const d = DB.deudores.find(x => x.id === cuentaActualId);
-  if (!d) return;
+function renderListaCargo() {
+  const cont = document.getElementById('cargo-lista');
+  if (!cont) return;
+  if (!cargoLista.length) { cont.innerHTML = ''; return; }
+  const total = cargoLista.reduce((s, x) => s + x.precioUnit * x.cantidad, 0);
+  cont.innerHTML = `<div class="cargo-lista-caja">
+    <div class="cargo-lista-tit">Se agregará a la cuenta (${cargoLista.length})</div>
+    ${cargoLista.map((x, i) => `<div class="cargo-lista-fila"><span class="cl-n">${esc(x.productoNombre)}<small>${x.cantidad} × ${fmt(x.precioUnit)}</small></span><b>${fmt(x.precioUnit * x.cantidad)}</b><button type="button" class="btn-peligro btn-quitar-cargo-lista" data-i="${i}" style="padding:3px 7px"><i class="ti ti-x"></i></button></div>`).join('')}
+    <div class="cargo-lista-total"><span>Total a agregar</span><b>${fmt(total)}</b></div>
+  </div>`;
+  cont.querySelectorAll('.btn-quitar-cargo-lista').forEach(b => b.addEventListener('click', () => { cargoLista.splice(parseInt(b.dataset.i), 1); renderListaCargo(); }));
+}
+
+// Valida lo que hay en el formulario y lo devuelve como cargo (sin fecha/hora todavía).
+function leerFormularioCargo() {
   const detalle = document.getElementById('cargo-detalle').value.trim();
   const cantidad = parseInt(document.getElementById('cargo-cantidad').value) || 0;
   const precio = parseFloat(document.getElementById('cargo-precio').value);
   const costoTxt = document.getElementById('cargo-costo').value;
-  if (!detalle) { alert('Escribe el detalle de lo que se lleva'); return; }
-  if (cantidad < 1) { alert('La cantidad debe ser al menos 1'); return; }
-  if (!(precio >= 0) || isNaN(precio)) { alert('Ingresa el precio unitario'); return; }
+  if (!detalle) { alert('Escribe el detalle de lo que se lleva'); return null; }
+  if (cantidad < 1) { alert('La cantidad debe ser al menos 1'); return null; }
+  if (!(precio >= 0) || isNaN(precio)) { alert('Ingresa el precio unitario'); return null; }
   const p = cargoProductoSel;
-  if (p && cantidad > p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${p.nombre}.`); return; }
+  if (p) {
+    const yaEnLista = cargoLista.filter(x => x.productoId === p.id).reduce((s, x) => s + x.cantidad, 0);
+    if (yaEnLista + cantidad > p.stock) { alert(`Solo hay ${p.stock} unidades disponibles de ${p.nombre}` + (yaEnLista ? ` (ya agregaste ${yaEnLista} en esta lista).` : '.')); return null; }
+  }
+  return {
+    productoId: p ? p.id : '', ref: p ? p.ref : '', productoNombre: detalle,
+    cantidad, precioUnit: precio, costoUnit: costoTxt === '' ? null : (parseFloat(costoTxt) || 0)
+  };
+}
+
+function anadirCargoALista() {
+  const it = leerFormularioCargo();
+  if (!it) return false;
+  cargoLista.push(it);
+  limpiarFormularioCargo();
+  renderListaCargo();
+  document.getElementById('cargo-buscar').focus();
+  return true;
+}
+
+async function guardarCargo() {
+  const d = DB.deudores.find(x => x.id === cuentaActualId);
+  if (!d) return;
+  // Si dejó algo escrito en el formulario, se suma a la lista antes de guardar.
+  if (document.getElementById('cargo-detalle').value.trim() !== '' && !anadirCargoALista()) return;
+  if (!cargoLista.length) { alert('Agrega al menos un producto o detalle a la lista'); return; }
 
   const ahora = new Date();
-  const cargo = {
-    productoId: p ? p.id : '', ref: p ? p.ref : '', productoNombre: detalle,
-    cantidad, precioUnit: precio, costoUnit: costoTxt === '' ? null : (parseFloat(costoTxt) || 0),
-    fecha: fechaCO(ahora), hora: horaCO(ahora)
-  };
+  const fecha = fechaCO(ahora), hora = horaCO(ahora);
+  const cargos = cargoLista.map(x => Object.assign({}, x, { fecha, hora }));
+  const totalNuevo = cargos.reduce((s, x) => s + x.precioUnit * x.cantidad, 0);
   const antes = { productos: (d.productos || []).slice(), monto: d.monto, pagada: d.pagada };
   const btn = document.getElementById('btn-guardar-cargo');
   if (btn.disabled) return;
   btn.disabled = true; btn.textContent = 'Guardando...';
   try {
-    // si había una "Deuda inicial" implícita, se mantiene porque monto sigue siendo la suma real
-    d.productos = (d.productos || []).concat([cargo]);
-    d.monto = (Number(d.monto) || 0) + precio * cantidad;
+    d.productos = (d.productos || []).concat(cargos);
+    d.monto = (Number(d.monto) || 0) + totalNuevo;
     d.pagada = false;
     const ok = await guardarDeudorEnSheet(d, false);
     if (!ok) throw new Error('Google Sheets no confirmó el cambio.');
-    if (p) {
-      p.stock = Math.max(0, p.stock - cantidad);
+    // descuenta del inventario lo que salió (suma por producto)
+    const porProducto = {};
+    cargos.forEach(x => { if (x.productoId) porProducto[x.productoId] = (porProducto[x.productoId] || 0) + x.cantidad; });
+    for (const id of Object.keys(porProducto)) {
+      const p = DB.productos.find(x => x.id === id);
+      if (!p) continue;
+      p.stock = Math.max(0, p.stock - porProducto[id]);
       await sheetsEscribir('update','Productos',[p.id,p.ref,p.nombre,p.pcompra,p.pventa1,p.pventa2,p.stock],p.id);
     }
+    const n = cargos.length;
+    cargoLista = [];
     guardarLocal();
     cerrarModal('modal-cargo');
     renderCuenta(); renderDeudores(); renderDashboard();
-    mostrarToast('Agregado a la cuenta ✓');
+    mostrarToast(n === 1 ? 'Agregado a la cuenta ✓' : `${n} productos agregados a la cuenta ✓`);
   } catch (e) {
     Object.assign(d, antes);
     guardarLocal();
     alert('NO SE PUDO AGREGAR A LA CUENTA.\n\n' + (e && e.message ? e.message : String(e)));
   } finally {
-    btn.disabled = false; btn.textContent = 'Agregar';
+    btn.disabled = false; btn.textContent = 'Guardar en la cuenta';
   }
 }
 
@@ -1971,43 +2141,31 @@ function imprimirCuentaDeuda(d) {
   const ahora = new Date();
   const mov = movimientosDeCuenta(d);
   let corrido = 0, totCargos = 0, totAbonos = 0;
-  const celda = 'border:1px solid #999;padding:5px 7px;';
   const filas = mov.map(m => {
     if (m.tipo === 'cargo') { corrido += m.valor; totCargos += m.valor; } else { corrido -= m.valor; totAbonos += m.valor; }
     const abono = m.tipo === 'abono';
-    return `<tr style="${abono ? 'background:#f1f1f1' : ''}">
-      <td style="${celda}">${esc(m.fecha)}</td><td style="${celda}">${esc(m.hora)}</td>
-      <td style="${celda}">${abono ? '<b>ABONO</b> (' + esc(m.detalle.replace('Abono en ', '')) + ')' : esc(m.detalle)}</td>
-      <td style="${celda}text-align:right">${!abono && m.cant ? m.cant : ''}</td>
-      <td style="${celda}text-align:right">${!abono ? fmt(m.valor) : ''}</td>
-      <td style="${celda}text-align:right">${abono ? '<b>' + fmt(m.valor) + '</b>' : ''}</td>
-      <td style="${celda}text-align:right">${fmt(corrido)}</td></tr>`;
+    return `<tr class="${abono ? 'pk-abono' : ''}">
+      <td class="nw">${esc(m.fecha)}</td><td class="nw">${esc(m.hora)}</td>
+      <td>${abono ? '<b>ABONO</b> ' + esc(m.detalle.replace('Abono · ', '')) : esc(m.detalle)}</td>
+      <td class="der">${!abono && m.cant ? m.cant : ''}</td>
+      <td class="der">${!abono ? fmt(m.valor) : ''}</td>
+      <td class="der">${abono ? '<b>' + fmt(m.valor) + '</b>' : ''}</td>
+      <td class="der">${fmt(corrido)}</td></tr>`;
   }).join('');
   const saldo = calcularSaldo(d);
 
-  document.getElementById('deudor-print-contenido').innerHTML = `
-    <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:12px">
-      <div style="font-size:22px;font-weight:bold">PAPELERÍA KAREN</div>
-      <div style="font-size:13px;margin-top:2px">ESTADO DE CUENTA — CRÉDITO</div>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:12px">
-      <div><b>Cliente:</b> ${esc(d.nombre)}${d.nota ? ' — ' + esc(d.nota) : ''}<br><b>CC:</b> ${esc(d.cedula)}${d.telefono ? ' · <b>Tel:</b> ' + esc(d.telefono) : ''}</div>
-      <div style="text-align:right"><b>Impreso:</b> ${fechaCO(ahora)} · ${horaCO(ahora)}${mov.length ? '<br><b>Desde:</b> ' + esc(mov[0].fecha) : ''}${d.fechaLimite ? '<br><b>Fecha límite:</b> ' + esc(d.fechaLimite) : ''}</div>
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
-      <thead><tr style="background:#eee">
-        <th style="${celda}text-align:left">Fecha</th><th style="${celda}text-align:left">Hora</th><th style="${celda}text-align:left">Detalle</th>
-        <th style="${celda}text-align:right">Cant.</th><th style="${celda}text-align:right">Cargo</th><th style="${celda}text-align:right">Abono</th><th style="${celda}text-align:right">Saldo</th>
-      </tr></thead>
-      <tbody>${filas}</tbody>
-    </table>
-    <div style="margin:16px 0 0 auto;width:300px;font-size:14px">
-      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>Total cargos</span><b>${fmt(totCargos)}</b></div>
-      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>Total abonos</span><b>${fmt(totAbonos)}</b></div>
-      <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:2px solid #000;font-size:17px"><b>SALDO PENDIENTE</b><b>${fmt(saldo)}</b></div>
-    </div>
-    ${saldo <= 0 && d.monto > 0 ? '<p style="text-align:center;margin-top:10px;font-size:13px"><b>CUENTA CANCELADA EN SU TOTALIDAD</b></p>' : ''}
-    <div style="display:flex;gap:60px;margin-top:60px;font-size:12px;text-align:center"><div style="flex:1;border-top:1px solid #000;padding-top:4px">Firma del cliente</div><div style="flex:1;border-top:1px solid #000;padding-top:4px">Papelería Karen</div></div>`;
+  document.getElementById('deudor-print-contenido').innerHTML = pkDoc({
+    tipo: 'Estado de cuenta',
+    numero: d.numero || '',
+    subtitulo: 'Crédito',
+    fecha: fechaCO(ahora), hora: horaCO(ahora),
+    datos: [['Cliente', d.nombre + (d.nota ? ' — ' + d.nota : '')], ['Cédula', d.cedula], ['Teléfono', d.telefono], ['Desde', mov.length ? mov[0].fecha : ''], ['Fecha límite', d.fechaLimite]],
+    cuerpo: `<table class="pk-tabla"><thead><tr><th>Fecha</th><th>Hora</th><th>Detalle</th><th class="der">Cant.</th><th class="der">Cargo</th><th class="der">Abono</th><th class="der">Saldo</th></tr></thead><tbody>${filas}</tbody></table>`,
+    totales: pkFila('Total cargos', fmt(totCargos)) + pkFila('Total abonos', fmt(totAbonos)) + pkFila('SALDO PENDIENTE', fmt(saldo), 'gran'),
+    sello: saldo <= 0 && d.monto > 0 ? 'CUENTA CANCELADA EN SU TOTALIDAD' : '',
+    firmas: true,
+    pie: 'Gracias por su confianza'
+  });
   prepararImpresion('deudor-print');
   window.print();
 }
@@ -2136,7 +2294,7 @@ function abrirModalAnticipo(id) {
   document.getElementById('anticipo-producto-buscar').value = '';
   document.getElementById('anticipo-producto-resultados').innerHTML = '';
   document.getElementById('anticipo-inicial').value = '';
-  document.querySelector('input[name="anticipo-metodo"][value="efectivo"]').checked = true;
+  mixtoReset('anticipo', 'anticipo-metodo');
   quitarClienteAnticipo();
   document.getElementById('anticipo-cliente-buscar').value = '';
   document.getElementById('anticipo-cliente-resultados').innerHTML = '';
@@ -2189,6 +2347,8 @@ async function guardarAnticipo() {
   const inicial = parseFloat(document.getElementById('anticipo-inicial').value)||0;
   const metodoPago = document.querySelector('input[name="anticipo-metodo"]:checked').value;
   if (inicial > monto) { alert('El pago inicial no puede ser mayor al monto total'); return; }
+  let repartoInicial = null;
+  if (inicial > 0 && metodoPago === 'mixto') { repartoInicial = mixtoLeer('anticipo', inicial); if (!repartoInicial) { btn.textContent='Guardar'; btn.disabled=false; return; } }
 
   const ahora = new Date();
   const nuevo = {
@@ -2201,7 +2361,7 @@ async function guardarAnticipo() {
   DB.anticipos.push(nuevo);
   await guardarAnticipoEnSheet(nuevo, true);
 
-  if (inicial > 0) await registrarPagoDeuda(nuevo, 'anticipo', inicial, metodoPago);
+  if (inicial > 0) await registrarPagoDeuda(nuevo, 'anticipo', inicial, metodoPago, repartoInicial);
 
   guardarLocal(); btn.textContent='Guardar'; btn.disabled=false;
   cerrarModal('modal-anticipo'); renderAnticipos(); renderDashboard();
@@ -2323,7 +2483,7 @@ function abrirModalAbonoProveedor(id) {
   document.getElementById('abono-proveedor-nombre').textContent = p.empresa;
   document.getElementById('abono-proveedor-saldo').textContent = `Saldo pendiente: ${fmt(calcularSaldo(p))}`;
   document.getElementById('abono-proveedor-monto').value = '';
-  document.querySelector('input[name="abono-proveedor-metodo"][value="efectivo"]').checked = true;
+  mixtoReset('abonoprov', 'abono-proveedor-metodo');
   abrirModal('modal-abono-proveedor');
   setTimeout(() => document.getElementById('abono-proveedor-monto').focus(), 100);
 }
@@ -2336,10 +2496,14 @@ async function guardarAbonoProveedor() {
   if (!monto || monto<=0) { alert('Ingresa un monto válido'); return; }
   if (monto > saldo) { alert(`El pago no puede ser mayor al saldo pendiente (${fmt(saldo)})`); return; }
   const metodoPago = document.querySelector('input[name="abono-proveedor-metodo"]:checked').value;
+  let reparto = null;
+  if (metodoPago === 'mixto') { reparto = mixtoLeer('abonoprov', monto); if (!reparto) return; }
 
   const ahora = new Date();
   p.abonos = p.abonos || [];
-  p.abonos.push({ id: uid(), monto, metodoPago, fecha: fechaCO(ahora), hora: horaCO(ahora) });
+  const nuevoAbono = { id: uid(), monto, metodoPago, fecha: fechaCO(ahora), hora: horaCO(ahora) };
+  if (reparto) { nuevoAbono.efectivo = reparto.efectivo; nuevoAbono.transferencia = reparto.transferencia; }
+  p.abonos.push(nuevoAbono);
   p.pagada = calcularSaldo(p) <= 0;
 
   await guardarProveedorEnSheet(p, false);
@@ -2356,38 +2520,18 @@ function imprimirBoucherProveedor(p) {
   const saldo = calcularSaldo(p);
   const valorCuota = p.numeroCuotas>0 ? p.monto/p.numeroCuotas : p.monto;
   const cuotasPendientes = valorCuota>0 ? Math.min(p.numeroCuotas, Math.ceil(saldo/valorCuota)) : 0;
-
   const filasAbonos = abonos.map((a,i) => `
-    <tr>
-      <td>${i+1}</td>
-      <td>${a.fecha} ${a.hora}</td>
-      <td>${a.metodoPago==='transferencia'?'Transferencia':'Efectivo'}</td>
-      <td style="text-align:right">${fmt(a.monto)}</td>
-    </tr>`).join('');
+    <tr><td>${i+1}</td><td>${esc(a.fecha)} ${esc(a.hora)}</td><td>${esc(textoMetodoPago(a))}</td><td class="der">${fmt(a.monto)}</td></tr>`).join('');
 
-  document.getElementById('proveedor-print-contenido').innerHTML = `
-    <div id="tp-header">
-      <h1>Papelería Karen</h1>
-      <p>Comprobante de pago a proveedor</p>
-    </div>
-    <div id="tp-meta">
-      <span><strong>Fecha:</strong> ${fechaCO(ahora)}</span>
-      <span><strong>Hora:</strong> ${horaCO(ahora)}</span>
-    </div>
-    <p style="font-size:13px;margin-bottom:4px"><strong>Proveedor:</strong> ${esc(p.empresa)}</p>
-    ${p.fechaLlegadaPedido?`<p style="font-size:13px;margin-bottom:4px"><strong>Fecha de llegada del pedido:</strong> ${p.fechaLlegadaPedido}</p>`:''}
-    <p style="font-size:13px;margin-bottom:4px"><strong>Cuotas pendientes:</strong> ${cuotasPendientes} de ${p.numeroCuotas}</p>
-    ${p.fechaLimite?`<p style="font-size:13px;margin-bottom:12px"><strong>Fecha límite de pago:</strong> ${p.fechaLimite}</p>`:''}
-    <p style="margin-top:8px;font-size:14px"><strong>Monto total del pedido: ${fmt(p.monto)}</strong></p>
-    ${abonos.length?`
-      <p style="margin-top:12px;font-size:13px"><strong>Pagos realizados:</strong></p>
-      <table>
-        <thead><tr><th>#</th><th>Fecha</th><th>Método</th><th>Monto</th></tr></thead>
-        <tbody>${filasAbonos}</tbody>
-      </table>`:''}
-    <p style="margin-top:12px;font-size:16px"><strong>Saldo pendiente: ${fmt(saldo)}</strong></p>
-    ${saldo<=0?'<p style="text-align:center;margin-top:8px;font-size:13px">FACTURA CANCELADA EN SU TOTALIDAD</p>':''}
-  `;
+  document.getElementById('proveedor-print-contenido').innerHTML = pkDoc({
+    tipo: 'Pago a proveedor',
+    fecha: fechaCO(ahora), hora: horaCO(ahora),
+    datos: [['Proveedor', p.empresa], ['Llegada del pedido', p.fechaLlegadaPedido], ['Cuotas pendientes', `${cuotasPendientes} de ${p.numeroCuotas}`], ['Fecha límite', p.fechaLimite]],
+    cuerpo: abonos.length ? `<div class="pk-subtit">Pagos realizados</div><table class="pk-tabla"><thead><tr><th>#</th><th>Fecha</th><th>Método</th><th class="der">Monto</th></tr></thead><tbody>${filasAbonos}</tbody></table>` : '',
+    totales: pkFila('Monto del pedido', fmt(p.monto)) + pkFila('Pagado', fmt(calcularAbonado(p))) + pkFila('Saldo pendiente', fmt(saldo), 'gran'),
+    sello: saldo<=0 ? 'FACTURA CANCELADA EN SU TOTALIDAD' : '',
+    pie: 'Papelería Karen'
+  });
 
   prepararImpresion('proveedor-print');
   window.print();
@@ -3015,9 +3159,7 @@ async function posImprimir(texto) {
 // =============================================
 function abrirFactura(venta) {
   facturaVentaActual = venta;
-  const metodoBadge = venta.metodoPago === 'transferencia'
-    ? '<span class="badge rosa">🏦 Transferencia</span>'
-    : '<span class="badge verde">💵 Efectivo</span>';
+  const metodoBadge = badgeMetodo(venta);
 
   const filas = venta.items.map(i => `
     <tr>
@@ -3034,7 +3176,7 @@ function abrirFactura(venta) {
       <p style="font-size:12px;color:var(--texto2);margin-top:4px">Inventario & Ventas</p>
     </div>
     <div style="display:flex;justify-content:space-between;margin-bottom:1rem;font-size:13px;color:var(--texto2)">
-      <div><div><strong>Fecha:</strong> ${venta.fecha}</div><div><strong>Hora:</strong> ${venta.hora}</div></div>
+      <div>${venta.numero?`<div><strong>N°:</strong> ${esc(venta.numero)}</div>`:''}<div><strong>Fecha:</strong> ${venta.fecha}</div><div><strong>Hora:</strong> ${venta.hora}</div></div>
       <div style="text-align:right"><div><strong>Método:</strong></div><div style="margin-top:4px">${metodoBadge}</div></div>
     </div>
     ${venta.clienteNombre?`<div style="background:var(--blush-claro);padding:8px 12px;border-radius:8px;font-size:13px;color:var(--texto2);margin-bottom:1rem">
@@ -3076,44 +3218,37 @@ function abrirFactura(venta) {
 // nombre, para poder usarlo como respaldo cuando la impresión térmica POS
 // (más abajo) no esté disponible.
 function imprimirBoucherHTML(venta) {
-  const metodoTexto = venta.metodoPago === 'transferencia' ? 'Transferencia' : 'Efectivo';
-
+  const esAbono = /^(Abono deuda|Anticipo)/i.test(venta.nota || '');
   const filas = venta.items.map(i => `
     <tr>
       <td>${esc(i.ref||'-')}</td>
       <td>${esc(i.nombre)}</td>
-      <td style="text-align:center">${i.cantidad}</td>
-      <td style="text-align:right">${fmt(i.precio)}</td>
+      <td class="cen">${i.cantidad}</td>
+      <td class="der">${fmt(i.precio)}</td>
+      <td class="der">${fmt((Number(i.precio)||0) * (Number(i.cantidad)||0))}</td>
     </tr>`).join('');
 
-  document.getElementById('venta-print-contenido').innerHTML = `
-    <div id="tp-header">
-      <h1>Papelería Karen</h1>
-      <p>Comprobante de venta</p>
-    </div>
-    <div id="tp-meta">
-      <span><strong>Fecha:</strong> ${venta.fecha}</span>
-      <span><strong>Hora:</strong> ${venta.hora}</span>
-    </div>
-    ${venta.clienteNombre?`
-    <p style="font-size:13px;margin-bottom:4px"><strong>Cliente:</strong> ${esc(venta.clienteNombre)}</p>
-    <p style="font-size:13px;margin-bottom:4px"><strong>Cédula:</strong> ${esc(venta.clienteCedula||'-')}</p>
-    ${venta.clienteTelefono?`<p style="font-size:13px;margin-bottom:4px"><strong>Teléfono:</strong> ${esc(venta.clienteTelefono)}</p>`:''}
-    ${venta.clienteDireccion?`<p style="font-size:13px;margin-bottom:10px"><strong>Dirección:</strong> ${esc(venta.clienteDireccion)}</p>`:''}
-    `:''}
-    ${venta.nota?`<p style="font-size:13px;margin-bottom:10px"><strong>Nota:</strong> ${esc(venta.nota)}</p>`:''}
-    <table>
-      <thead><tr><th>Código</th><th>Producto</th><th>Cant.</th><th>Precio</th></tr></thead>
-      <tbody>${filas}</tbody>
-    </table>
-    <p style="margin-top:12px;font-size:14px;text-align:right"><strong>${venta.saldoPendiente!==undefined?'Pagado ahora':'Total'}: ${fmt(venta.total)}</strong></p>
-    ${venta.saldoPendiente!==undefined?`<p style="margin-top:4px;font-size:14px;text-align:right;color:#A32D2D"><strong>Falta por cancelar: ${fmt(venta.saldoPendiente)}</strong></p>`:''}
-    ${venta.pagoRecibido!==undefined?`
-    <p style="margin-top:4px;font-size:13px;text-align:right">Pago recibido: ${fmt(venta.pagoRecibido)}</p>
-    <p style="margin-top:2px;font-size:14px;text-align:right"><strong>Cambio: ${fmt(venta.cambio||0)}</strong></p>`:''}
-    <p style="margin-top:4px;font-size:12px;text-align:right">Método de pago: ${metodoTexto}</p>
-    <p style="text-align:center;margin-top:20px;font-size:12px">¡Gracias por tu compra!</p>
-  `;
+  let totales = '';
+  if (venta.saldoPendiente !== undefined) {
+    totales += pkFila('Pagado ahora', fmt(venta.total));
+    totales += pkFila('Falta por cancelar', fmt(venta.saldoPendiente), 'gran');
+  } else {
+    totales += pkFila('TOTAL', fmt(venta.total), 'gran');
+    if (venta.pagoRecibido !== undefined) {
+      totales += pkFila('Pago recibido', fmt(venta.pagoRecibido));
+      totales += pkFila('Cambio', fmt(venta.cambio || 0));
+    }
+  }
+
+  document.getElementById('venta-print-contenido').innerHTML = pkDoc({
+    tipo: esAbono ? 'Recibo de abono' : 'Comprobante de venta',
+    numero: venta.numero || '',
+    fecha: venta.fecha, hora: venta.hora,
+    datos: [['Cliente', venta.clienteNombre], ['Cédula', venta.clienteCedula], ['Teléfono', venta.clienteTelefono], ['Dirección', venta.clienteDireccion], ['Pago', textoMetodoPago(venta)]],
+    cuerpo: `<table class="pk-tabla"><thead><tr><th>Código</th><th>Producto</th><th class="cen">Cant.</th><th class="der">Precio</th><th class="der">Total</th></tr></thead><tbody>${filas}</tbody></table>`,
+    totales,
+    extra: venta.nota ? `<div class="pk-nota"><b>Nota:</b> ${esc(venta.nota)}</div>` : ''
+  });
 
   prepararImpresion('venta-print');
   window.print();
@@ -3127,8 +3262,8 @@ function imprimirBoucherHTML(venta) {
 // imprimir. Se mantiene el mismo nombre de función para no tener que tocar
 // ningún otro lugar del código que ya llama a imprimirBoucher(venta).
 async function imprimirBoucher(venta) {
-  // Esta papelería no usa QZ Tray: si la librería no está cargada, impresión normal del navegador.
-  if (typeof qz === 'undefined') { imprimirBoucherHTML(venta); return; }
+  // Esta papelería NO imprime por POS: todo sale en impresión normal (hoja).
+  imprimirBoucherHTML(venta); return;
   try {
     const ticket = construirTicketVentaPOS(venta);
     await posImprimir(ticket);
@@ -3740,13 +3875,14 @@ async function finalizarVenta(pagoEfectivoRecibido) {
     clienteId: clienteVenta?clienteVenta.id:'', clienteNombre: clienteVenta?clienteVenta.nombre:'',
     clienteCedula: clienteVenta?clienteVenta.cedula:'', clienteTelefono: clienteVenta?clienteVenta.telefono:'',
     clienteDireccion: clienteVenta?clienteVenta.direccion:'',
-    alegraId: '', alegraNumero: '',
+    alegraId: '', alegraNumero: '', numero: '',
     pagoRecibido: pagoEfectivoRecibido!=null?pagoEfectivoRecibido:undefined, cambio,
     pagoEf: metodoPago==='mixto' ? (parseFloat(document.getElementById('pago-mixto-efectivo').value)||0) : undefined,
     pagoTr: metodoPago==='mixto' ? (parseFloat(document.getElementById('pago-mixto-transferencia').value)||0) : undefined
   };
+  venta.numero = await siguienteNumeroVenta();
   DB.ventas.push(venta);
-  await sheetsEscribir('append','Ventas',[venta.id,venta.fecha,venta.hora,venta.total,venta.ganancia,venta.nota,venta.metodoPago,JSON.stringify(venta.items),venta.clienteId,venta.clienteNombre,venta.clienteCedula,venta.clienteTelefono,venta.clienteDireccion,'','','','',venta.pagoRecibido!=null?venta.pagoRecibido:'',venta.cambio!=null?venta.cambio:'',venta.pagoEf!=null?venta.pagoEf:'',venta.pagoTr!=null?venta.pagoTr:'']);
+  await sheetsEscribir('append','Ventas',[venta.id,venta.fecha,venta.hora,venta.total,venta.ganancia,venta.nota,venta.metodoPago,JSON.stringify(venta.items),venta.clienteId,venta.clienteNombre,venta.clienteCedula,venta.clienteTelefono,venta.clienteDireccion,'','','','',venta.pagoRecibido!=null?venta.pagoRecibido:'',venta.cambio!=null?venta.cambio:'',venta.pagoEf!=null?venta.pagoEf:'',venta.pagoTr!=null?venta.pagoTr:'',venta.numero]);
 
   guardarLocal();
   mostrarToast(`Venta registrada · ${metodoPago==='transferencia'?'🏦':metodoPago==='mixto'?'🔀':'💵'} ${fmt(total)}`);
@@ -4566,10 +4702,15 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-quitar-producto-cargo').addEventListener('click', () => { cargoProductoSel = null; document.getElementById('cargo-producto-chip').classList.add('hidden'); });
   document.getElementById('btn-guardar-cargo').addEventListener('click', guardarCargo);
   ['cargo-cantidad','cargo-precio'].forEach(i => document.getElementById(i).addEventListener('input', actualizarTotalCargo));
+  document.getElementById('btn-cargo-anadir').addEventListener('click', anadirCargoALista);
+  ['cargo-cantidad','cargo-precio','cargo-costo','cargo-detalle'].forEach(i => document.getElementById(i).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); anadirCargoALista(); } }));
   document.getElementById('btn-abrir-modal-deudor').addEventListener('click', () => abrirModalDeudor(null));
   document.getElementById('btn-guardar-deudor').addEventListener('click', guardarDeudor);
   document.getElementById('btn-guardar-abono').addEventListener('click', guardarAbono);
   document.getElementById('abono-monto').addEventListener('keydown', e => { if (e.key==='Enter') guardarAbono(); });
+  mixtoInit('abono', 'abono-metodo', 'abono-monto');
+  mixtoInit('anticipo', 'anticipo-metodo', 'anticipo-inicial');
+  mixtoInit('abonoprov', 'abono-proveedor-metodo', 'abono-proveedor-monto');
 
   // Anticipos
   inicializarBuscadorCliente('anticipo', 'anticipo-cliente-buscar', 'anticipo-cliente-resultados', seleccionarClienteAnticipo);
