@@ -1064,3 +1064,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--rosa); backgroun
 .ce-otro-precio input { margin: 0; flex: 1; }
 .ce-precio:focus { outline: 3px solid var(--rosa-oscuro); }
 .cargo-hint { font-size: 12px; color: var(--texto2); margin: 8px 0 0; text-align: center; }
+
+/* Colores siempre al imprimir (aunque "Gráficos de fondo" esté apagado en el navegador) */
+@media print {
+  html, body, .pk-doc, .pk-doc * , .pk-doc *::before, .pk-doc *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
